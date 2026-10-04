@@ -61,6 +61,8 @@
   .seg input:checked + label { background: var(--fg); color: var(--panel); }
   .seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: -2px; }
   .row { display: grid; grid-template-columns: 74px 1fr 42px; align-items: center; gap: 8px; font-size: 13px; }
+  .row select { padding: 4px 6px; grid-column: 2 / 4; }
+  .row.check { grid-template-columns: 74px 1fr; }
   .row output { font: 12px var(--mono); text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
   input[type=range] { width: 100%; accent-color: var(--accent); }
   .checks { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; }
@@ -71,6 +73,7 @@
   .hint { font-size: 12px; color: var(--muted); margin: 0; }
   kbd { font: 11px var(--mono); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
 
+  .stats { position: absolute; right: 14px; bottom: 12px; font: 11px var(--mono); color: var(--muted); pointer-events: none; text-align: right; font-variant-numeric: tabular-nums; }
   .hud { position: absolute; left: 14px; bottom: 12px; display: flex; gap: 14px; align-items: flex-end; pointer-events: none; font: 12px var(--mono); color: var(--muted); }
   .legend { display: flex; flex-direction: column; gap: 4px; }
   .legend .bar { width: 160px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, #3d4ed6, #1fb5b0, #f2c14e, #ee5d4a); }
@@ -91,28 +94,22 @@
   <aside>
     <h1>Polychoron viewer</h1>
     <div class="pick">
-      <button id="prev" aria-label="Previous polytope">‹</button>
-      <select id="poly" aria-label="Polytope"></select>
-      <button id="next" aria-label="Next polytope">›</button>
+      <button id="prev" aria-label="Previous object">‹</button>
+      <select id="obj" aria-label="Object"></select>
+      <button id="next" aria-label="Next object">›</button>
     </div>
 
     <div class="card">
       <p class="name" id="pname">—</p>
       <div class="sym" id="psym"></div>
-      <div class="counts">
-        <div><b id="nC">0</b><span>cells</span></div>
-        <div><b id="nF">0</b><span>faces</span></div>
-        <div><b id="nE">0</b><span>edges</span></div>
-        <div><b id="nV">0</b><span>verts</span></div>
-      </div>
-      <dl>
-        <dt>Cell</dt><dd id="pcell"></dd>
-        <dt>Face</dt><dd id="pface"></dd>
-        <dt>Vertex fig.</dt><dd id="pvf"></dd>
-        <dt>Density</dt><dd id="pden"></dd>
-        <dt id="pfamT">Family</dt><dd id="pfam"></dd>
-      </dl>
+      <div class="counts" id="counts"></div>
+      <dl id="rows"></dl>
     </div>
+
+    <section id="paramSec">
+      <span class="label">Parameters</span>
+      <div id="params"></div>
+    </section>
 
     <section>
       <span class="label">View</span>
@@ -140,9 +137,11 @@
       <span class="label">4D → 3D projection</span>
       <div class="seg" role="radiogroup">
         <input type="radio" name="p4" id="p4-persp" value="persp" checked><label for="p4-persp">Perspective</label>
-        <input type="radio" name="p4" id="p4-ortho" value="ortho"><label for="p4-ortho">Orthographic</label>
+        <input type="radio" name="p4" id="p4-ortho" value="ortho"><label for="p4-ortho">Ortho</label>
+        <input type="radio" name="p4" id="p4-stereo" value="stereo"><label for="p4-stereo">Stereo</label>
       </div>
       <div class="row" id="eyeRow"><label for="eye4">4D eye</label><input type="range" id="eye4" min="1.4" max="8" step="0.05" value="2.6"><output id="eye4O"></output></div>
+      <p class="hint" id="stereoHint">Stereographic projection maps the 3-sphere into 3D space from the pole at w = +1. Circles stay circles.</p>
     </section>
 
     <section id="sliceSec">
@@ -163,7 +162,7 @@
       <div class="btns">
         <button id="presetSimple">Simple XW</button>
         <button id="presetDouble">Double</button>
-        <button id="presetIso">Isoclinic</button>
+        <button id="presetIso" title="Equal XY and ZW spin: moves every point along its Hopf fibre">Isoclinic</button>
       </div>
     </section>
 
@@ -173,7 +172,7 @@
         <input type="radio" name="p3" id="p3-persp" value="persp" checked><label for="p3-persp">Perspective</label>
         <input type="radio" name="p3" id="p3-ortho" value="ortho"><label for="p3-ortho">Orthographic</label>
       </div>
-      <p class="hint">Drag to orbit, scroll or pinch to zoom. <kbd>Shift</kbd>-drag (or right-drag) turns the object in 4D. <kbd>Space</kbd> pause, <kbd>[</kbd> <kbd>]</kbd> change polytope, <kbd>S</kbd> slice.</p>
+      <p class="hint">Drag to orbit, scroll or pinch to zoom. <kbd>Shift</kbd>-drag (or right-drag) turns the object in 4D. <kbd>Space</kbd> pause, <kbd>[</kbd> <kbd>]</kbd> change object, <kbd>S</kbd> slice.</p>
     </section>
   </aside>
 
@@ -186,471 +185,11 @@
         <div class="ends"><span>kata −w</span><span>ana +w</span></div>
       </div>
     </div>
+    <div class="stats" id="stats"></div>
     <div class="err" id="err" hidden></div>
   </main>
 </div>
 
 <script src="geometry.js"></script>
-<script>
-(() => {
-  const $ = id => document.getElementById(id);
-  const P = window.Polychora;
-  const canvas = $('gl');
-  const gl = canvas.getContext('webgl2', { antialias: true, premultipliedAlpha: false });
-  if (!gl) { $('err').hidden = false; $('err').textContent = 'This viewer needs WebGL2, which this browser has turned off or does not support.'; return; }
-
-  // ---------- UI state ----------
-  const PLANES = [['XY', 0, 1], ['XZ', 0, 2], ['YZ', 1, 2], ['XW', 0, 3], ['YW', 1, 3], ['ZW', 2, 3]];
-  const state = {
-    id: 'small-stellated', mode: 'proj', surf: 'solid', col: 'depth', p4: 'persp', p3: 'persp',
-    edges: true, ghost: true, opacity: 0.18, eye4: 2.6, slice: 0, sweep: false, sweepSp: 0.25,
-    spin: [0, 0, 0.12, 0.3, 0, 0.18], playing: true,
-    yaw: 0.5, pitch: -0.35, dist: 3.7,
-  };
-  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (reduceMotion) state.playing = false;
-
-  const sel = $('poly');
-  for (const [label, kind] of [['Convex regular', 'convex'], ['Schläfli–Hess star polychora', 'star']]) {
-    const og = document.createElement('optgroup'); og.label = label;
-    for (const s of P.CATALOG.filter(s => s.kind === kind)) {
-      const o = document.createElement('option'); o.value = s.id; o.textContent = `${s.name}  ${s.sym}`; og.appendChild(o);
-    }
-    sel.appendChild(og);
-  }
-
-  const spinsEl = $('spins');
-  PLANES.forEach(([nm], i) => {
-    const r = document.createElement('div'); r.className = 'row';
-    r.innerHTML = `<label for="sp${i}">${nm}</label><input type="range" id="sp${i}" min="-1.2" max="1.2" step="0.01"><output id="sp${i}O"></output>`;
-    spinsEl.appendChild(r);
-    const inp = r.querySelector('input');
-    inp.addEventListener('input', () => { state.spin[i] = +inp.value; syncUI(); });
-  });
-
-  function syncUI() {
-    sel.value = state.id;
-    for (const n of ['mode', 'surf', 'col', 'p4', 'p3']) document.querySelector(`input[name=${n}][value=${state[n]}]`).checked = true;
-    $('edges').checked = state.edges; $('ghost').checked = state.ghost; $('sweep').checked = state.sweep;
-    $('opacity').value = state.opacity; $('opacityO').value = state.opacity.toFixed(2);
-    $('eye4').value = state.eye4; $('eye4O').value = state.eye4.toFixed(2);
-    $('slice').value = state.slice; $('sliceO').value = state.slice.toFixed(3);
-    $('sweepSp').value = state.sweepSp; $('sweepSpO').value = state.sweepSp.toFixed(2);
-    PLANES.forEach((_, i) => { $('sp' + i).value = state.spin[i]; $('sp' + i + 'O').value = state.spin[i].toFixed(2); });
-    const slice = state.mode === 'slice';
-    $('sliceSec').hidden = !slice; $('projSec').hidden = slice; $('ghostL').hidden = !slice;
-    $('eyeRow').hidden = state.p4 !== 'persp';
-    $('opRow').hidden = state.surf !== 'trans';
-    $('legend').hidden = state.col !== 'depth';
-    $('wread').hidden = !slice;
-    $('play').textContent = state.playing ? 'Pause' : 'Play';
-  }
-
-  for (const n of ['mode', 'surf', 'col', 'p4', 'p3'])
-    document.querySelectorAll(`input[name=${n}]`).forEach(r => r.addEventListener('change', () => { state[n] = r.value; syncUI(); }));
-  $('edges').addEventListener('change', e => { state.edges = e.target.checked; });
-  $('ghost').addEventListener('change', e => { state.ghost = e.target.checked; });
-  $('sweep').addEventListener('change', e => { state.sweep = e.target.checked; if (state.sweep) sweepPhase = Math.asin(Math.max(-1, Math.min(1, state.slice / 0.999))); });
-  for (const k of ['opacity', 'eye4', 'sweepSp']) $(k).addEventListener('input', e => { state[k] = +e.target.value; syncUI(); });
-  $('slice').addEventListener('input', e => { state.slice = +e.target.value; state.sweep = false; syncUI(); });
-  sel.addEventListener('change', () => load(sel.value));
-  const step = d => { const ids = P.CATALOG.map(s => s.id); load(ids[(ids.indexOf(state.id) + d + ids.length) % ids.length]); };
-  $('prev').onclick = () => step(-1); $('next').onclick = () => step(1);
-  $('play').onclick = () => { state.playing = !state.playing; syncUI(); };
-  $('stopSpin').onclick = () => { state.spin = [0, 0, 0, 0, 0, 0]; syncUI(); };
-  $('reset').onclick = () => { R = initialPose(); };
-  $('presetSimple').onclick = () => { state.spin = [0, 0, 0, 0.4, 0, 0]; state.playing = true; syncUI(); };
-  $('presetDouble').onclick = () => { state.spin = [0, 0, 0.12, 0.3, 0, 0.18]; state.playing = true; syncUI(); };
-  $('presetIso').onclick = () => { state.spin = [0, 0, 0.35, 0.35, 0, 0]; state.playing = true; syncUI(); };
-  addEventListener('keydown', e => {
-    if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' && e.target.type !== 'range' && e.target.type !== 'checkbox' && e.target.type !== 'radio') return;
-    if (e.key === ' ') { e.preventDefault(); state.playing = !state.playing; syncUI(); }
-    else if (e.key === '[') step(-1);
-    else if (e.key === ']') step(1);
-    else if (e.key === 's' || e.key === 'S') { state.mode = state.mode === 'slice' ? 'proj' : 'slice'; syncUI(); }
-  });
-
-  // ---------- 4D pose ----------
-  const ident4 = () => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-  function rotPlane(M, i, j, a) { // M <- G(i,j,a) * M  (rotate in world frame)
-    const c = Math.cos(a), s = Math.sin(a);
-    for (let k = 0; k < 4; k++) {
-      const x = M[i * 4 + k], y = M[j * 4 + k];
-      M[i * 4 + k] = c * x - s * y; M[j * 4 + k] = s * x + c * y;
-    }
-  }
-  function orthonormalize(M) {
-    for (let r = 0; r < 4; r++) {
-      for (let q = 0; q < r; q++) {
-        let d = 0; for (let k = 0; k < 4; k++) d += M[r * 4 + k] * M[q * 4 + k];
-        for (let k = 0; k < 4; k++) M[r * 4 + k] -= d * M[q * 4 + k];
-      }
-      let l = 0; for (let k = 0; k < 4; k++) l += M[r * 4 + k] ** 2; l = Math.sqrt(l);
-      for (let k = 0; k < 4; k++) M[r * 4 + k] /= l;
-    }
-  }
-  function initialPose() { const M = ident4(); rotPlane(M, 0, 3, 0.31); rotPlane(M, 1, 2, 0.23); rotPlane(M, 2, 3, 0.17); rotPlane(M, 0, 1, 0.11); return M; }
-  let R = initialPose();
-
-  // ---------- colours ----------
-  const DEPTH_STOPS = [[0x3d, 0x4e, 0xd6], [0x1f, 0xb5, 0xb0], [0xf2, 0xc1, 0x4e], [0xee, 0x5d, 0x4a]].map(c => c.map(x => x / 255));
-  function depthColor(w, out, o) {
-    const t = Math.max(0, Math.min(1, (w + 1) / 2)) * (DEPTH_STOPS.length - 1);
-    const k = Math.min(DEPTH_STOPS.length - 2, Math.floor(t)), f = t - k, a = DEPTH_STOPS[k], b = DEPTH_STOPS[k + 1];
-    out[o] = a[0] + (b[0] - a[0]) * f; out[o + 1] = a[1] + (b[1] - a[1]) * f; out[o + 2] = a[2] + (b[2] - a[2]) * f;
-  }
-  function hsl(h, s, l) {
-    const f = n => { const k = (n + h * 12) % 12, a = s * Math.min(l, 1 - l); return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
-    return [f(0), f(8), f(4)];
-  }
-  // Flat colours follow the Hopf fibration: directions on the same great-circle fibre share a hue.
-  function hopfColor(p) {
-    const l = Math.hypot(p[0], p[1], p[2], p[3]) || 1, a = p[0] / l, b = p[1] / l, c = p[2] / l, d = p[3] / l;
-    const x = 2 * (a * c + b * d), y = 2 * (b * c - a * d), z = a * a + b * b - c * c - d * d;
-    const h = (Math.atan2(y, x) / (2 * Math.PI) + 1) % 1;
-    return hsl(h, 0.62, 0.5 + 0.16 * z);
-  }
-  const hex = s => { s = s.trim().replace('#', ''); return [0, 2, 4].map(i => parseInt(s.slice(i, i + 2), 16) / 255); };
-  let theme = {};
-  function readTheme() {
-    const cs = getComputedStyle(document.documentElement);
-    theme = { canvas: hex(cs.getPropertyValue('--canvas')), fg: hex(cs.getPropertyValue('--fg')) };
-    theme.dark = theme.canvas[0] + theme.canvas[1] + theme.canvas[2] < 1.5;
-  }
-  readTheme();
-  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readTheme);
-  new MutationObserver(readTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-
-  // ---------- polytope preparation ----------
-  let G = null; // prepared geometry
-  function load(id) {
-    state.id = id;
-    const T = P.polytope(id), s = T.spec;
-    const nv = T.verts.length, nf = T.faces.length, nc = T.cells.length;
-    const npts = nv + nf + nc, pts = new Float64Array(npts * 4);
-    T.verts.forEach((v, i) => pts.set(v, i * 4));
-    const faceCtr = T.faces.map(f => { const c = [0, 0, 0, 0]; for (const i of f) for (let k = 0; k < 4; k++) c[k] += T.verts[i][k] / f.length; return c; });
-    faceCtr.forEach((c, i) => pts.set(c, (nv + i) * 4));
-    T.cells.forEach((c, i) => pts.set(c.center, (nv + nf + i) * 4));
-
-    // fan-triangulate faces (pentagrams included: a fan from the centre fills the star)
-    const ftri = [], ftriFace = [];
-    T.faces.forEach((f, fi) => {
-      if (f.length === 3) { ftri.push(f[0], f[1], f[2]); ftriFace.push(fi); return; }
-      for (let k = 0; k < f.length; k++) { ftri.push(nv + fi, f[k], f[(k + 1) % f.length]); ftriFace.push(fi); }
-    });
-    // each cell = union of tetrahedra (cell centre + face fan triangle); slicing those gives the cell's cross-section
-    const tet = [], tetCell = [], faceTris = T.faces.map(() => []);
-    ftriFace.forEach((f, t) => faceTris[f].push(t));
-    T.cells.forEach((c, ci) => {
-      for (const f of c.faces) for (const t of faceTris[f]) { tet.push(nv + nf + ci, ftri[t * 3], ftri[t * 3 + 1], ftri[t * 3 + 2]); tetCell.push(ci); }
-    });
-    G = {
-      T, pts, npts, nv, nf, nc,
-      ftri: Int32Array.from(ftri), ftriFace: Int32Array.from(ftriFace),
-      tet: Int32Array.from(tet), tetCell: Int32Array.from(tetCell),
-      edges: Int32Array.from(T.edges.flat()),
-      faceCol: faceCtr.map(hopfColor), cellCol: T.cells.map(c => hopfColor(c.center)),
-      q: new Float64Array(npts * 4), p3: new Float64Array(npts * 3),
-    };
-    $('pname').textContent = s.name; $('psym').textContent = s.sym;
-    $('nC').textContent = nc; $('nF').textContent = nf; $('nE').textContent = T.edges.length; $('nV').textContent = T.nverts;
-    $('pcell').textContent = s.cell; $('pface').textContent = s.face; $('pvf').textContent = s.vf; $('pden').textContent = s.density;
-    if (s.kind === 'star') {
-      $('pfamT').textContent = 'Relatives';
-      $('pfam').textContent = `stellation of the ${s.cdir === 'V' ? '120' : '600'}-cell; faceting of the ${s.set === 'V' ? '600' : '120'}-cell`;
-    } else { $('pfamT').textContent = 'Family'; $('pfam').textContent = 'convex regular'; }
-    syncUI();
-  }
-
-  // ---------- GL ----------
-  function prog(vs, fs) {
-    const mk = (t, src) => { const s = gl.createShader(t); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
-    const p = gl.createProgram(); gl.attachShader(p, mk(gl.VERTEX_SHADER, vs)); gl.attachShader(p, mk(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p);
-    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
-    return p;
-  }
-  const triProg = prog(`#version 300 es
-    in vec3 aPos; in vec3 aNor; in vec4 aCol;
-    uniform mat4 uProj, uView;
-    out vec3 vN; out vec4 vC; out vec3 vV;
-    void main() { vec4 p = uView * vec4(aPos, 1.0); vV = p.xyz; vN = mat3(uView) * aNor; vC = aCol; gl_Position = uProj * p; }`,
-  `#version 300 es
-    precision highp float;
-    in vec3 vN; in vec4 vC; in vec3 vV; uniform float uOrtho; out vec4 o;
-    void main() {
-      vec3 n = normalize(vN); vec3 v = uOrtho > 0.5 ? vec3(0, 0, 1) : normalize(-vV);
-      if (dot(n, v) < 0.0) n = -n;
-      vec3 L = normalize(vec3(-0.45, 0.7, 0.55));
-      float d = max(dot(n, L), 0.0), f = max(dot(n, normalize(vec3(0.6, -0.3, 0.75))), 0.0);
-      float s = pow(max(dot(n, normalize(L + v)), 0.0), 48.0);
-      o = vec4(vC.rgb * (0.30 + 0.62 * d + 0.20 * f) + 0.16 * s, vC.a);
-    }`);
-  const lineProg = prog(`#version 300 es
-    in vec3 aPos; in vec4 aCol; uniform mat4 uProj, uView; out vec4 vC;
-    void main() { vC = aCol; gl_Position = uProj * uView * vec4(aPos, 1.0); }`,
-  `#version 300 es
-    precision highp float; in vec4 vC; out vec4 o; void main() { o = vC; }`);
-
-  function makeVAO(p, layout) {
-    const vao = gl.createVertexArray(), buf = gl.createBuffer();
-    gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    const stride = layout.reduce((s, [, n]) => s + n, 0) * 4; let off = 0;
-    for (const [name, n] of layout) { const loc = gl.getAttribLocation(p, name); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, n, gl.FLOAT, false, stride, off); off += n * 4; }
-    gl.bindVertexArray(null);
-    return { vao, buf, cap: 0 };
-  }
-  const triVAO = makeVAO(triProg, [['aPos', 3], ['aNor', 3], ['aCol', 4]]);
-  const lineVAO = makeVAO(lineProg, [['aPos', 3], ['aCol', 4]]);
-  const ghostVAO = makeVAO(lineProg, [['aPos', 3], ['aCol', 4]]);
-  function upload(v, data, n) {
-    gl.bindBuffer(gl.ARRAY_BUFFER, v.buf);
-    if (n > v.cap) { v.cap = Math.ceil(n * 1.5); gl.bufferData(gl.ARRAY_BUFFER, v.cap * 4, gl.DYNAMIC_DRAW); }
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, data, 0, n);
-  }
-
-  // growable scratch buffers
-  let triRaw = new Float32Array(10 * 3 * 4096), triKey = new Float32Array(4096), triOut = new Float32Array(triRaw.length);
-  let lineBuf = new Float32Array(7 * 2 * 4096), ghostBuf = new Float32Array(7 * 2 * 4096);
-  let nTri = 0, nLine = 0, nGhost = 0;
-  function ensureTri(n) {
-    if (n <= triKey.length) return;
-    const m = Math.ceil(n * 1.5), a = new Float32Array(m * 30); a.set(triRaw); triRaw = a;
-    triOut = new Float32Array(m * 30); const k = new Float32Array(m); k.set(triKey); triKey = k;
-  }
-  function ensureLine(which, n) {
-    const b = which ? ghostBuf : lineBuf; if (n * 14 <= b.length) return b;
-    const a = new Float32Array(Math.ceil(n * 1.5) * 14); a.set(b); if (which) ghostBuf = a; else lineBuf = a; return a;
-  }
-  const tmpC = [0, 0, 0];
-  function pushTri(ax, ay, az, bx, by, bz, cx, cy, cz, r, g, b, a, cr, cg, cb) {
-    // optional per-vertex colours passed via colA/colB/colC arrays when cr is an array
-    ensureTri(nTri + 1);
-    let ux = bx - ax, uy = by - ay, uz = bz - az, vx = cx - ax, vy = cy - ay, vz = cz - az;
-    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-    const l = Math.hypot(nx, ny, nz); if (l < 1e-12) return; nx /= l; ny /= l; nz /= l;
-    const o = nTri * 30, T = triRaw;
-    const cols = cr;
-    const put = (k, x, y, z, ci) => {
-      const p = o + k * 10; T[p] = x; T[p + 1] = y; T[p + 2] = z; T[p + 3] = nx; T[p + 4] = ny; T[p + 5] = nz;
-      if (cols) { T[p + 6] = cols[ci]; T[p + 7] = cols[ci + 1]; T[p + 8] = cols[ci + 2]; } else { T[p + 6] = r; T[p + 7] = g; T[p + 8] = b; }
-      T[p + 9] = a;
-    };
-    put(0, ax, ay, az, 0); put(1, bx, by, bz, 3); put(2, cx, cy, cz, 6);
-    triKey[nTri] = (ax + bx + cx) * camF[0] + (ay + by + cy) * camF[1] + (az + bz + cz) * camF[2];
-    nTri++;
-  }
-  function pushLine(which, ax, ay, az, bx, by, bz, r, g, b, a, r2, g2, b2) {
-    const n = which ? nGhost : nLine, B = ensureLine(which, n + 1), o = n * 14;
-    B[o] = ax; B[o + 1] = ay; B[o + 2] = az; B[o + 3] = r; B[o + 4] = g; B[o + 5] = b; B[o + 6] = a;
-    B[o + 7] = bx; B[o + 8] = by; B[o + 9] = bz;
-    B[o + 10] = r2 ?? r; B[o + 11] = g2 ?? g; B[o + 12] = b2 ?? b; B[o + 13] = a;
-    if (which) nGhost++; else nLine++;
-  }
-
-  // ---------- camera ----------
-  const camF = [0, 0, 1]; // direction from scene toward camera, for depth sorting
-  function matPersp(fovy, asp, n, f) { const t = 1 / Math.tan(fovy / 2); return [t / asp, 0, 0, 0, 0, t, 0, 0, 0, 0, (f + n) / (n - f), -1, 0, 0, 2 * f * n / (n - f), 0]; }
-  function matOrtho(h, asp, n, f) { return [1 / (h * asp), 0, 0, 0, 0, 1 / h, 0, 0, 0, 0, -2 / (f - n), 0, 0, 0, -(f + n) / (f - n), 1]; }
-  function viewMat() {
-    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw), cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
-    // R = Rx(pitch) * Ry(yaw), then translate back by dist (column-major)
-    const m = [cy, sp * sy, -cp * sy, 0, 0, cp, sp, 0, sy, -sp * cy, cp * cy, 0, 0, 0, -state.dist, 1];
-    camF[0] = m[2]; camF[1] = m[6]; camF[2] = m[10];
-    return m;
-  }
-
-  // ---------- per-frame geometry ----------
-  function transform() {
-    const { pts, npts, q, p3 } = G, M = R;
-    const persp = state.p4 === 'persp' && state.mode === 'proj', D = state.eye4;
-    for (let i = 0; i < npts; i++) {
-      const o = i * 4, x = pts[o], y = pts[o + 1], z = pts[o + 2], w = pts[o + 3];
-      for (let r = 0; r < 4; r++) q[o + r] = M[r * 4] * x + M[r * 4 + 1] * y + M[r * 4 + 2] * z + M[r * 4 + 3] * w;
-      const s = persp ? (D - 1) / (D - q[o + 3]) * 1.0 : 1;
-      p3[i * 3] = q[o] * s; p3[i * 3 + 1] = q[o + 1] * s; p3[i * 3 + 2] = q[o + 2] * s;
-    }
-  }
-
-  const vcol = new Float32Array(9);
-  function buildProjection() {
-    const { ftri, ftriFace, faceCol, q, p3, edges } = G;
-    const depth = state.col === 'depth', alpha = state.surf === 'trans' ? state.opacity : 1;
-    if (state.surf !== 'wire') {
-      for (let t = 0; t < ftriFace.length; t++) {
-        const a = ftri[t * 3], b = ftri[t * 3 + 1], c = ftri[t * 3 + 2];
-        let cols = null, fc = faceCol[ftriFace[t]];
-        if (depth) { depthColor(q[a * 4 + 3], vcol, 0); depthColor(q[b * 4 + 3], vcol, 3); depthColor(q[c * 4 + 3], vcol, 6); cols = vcol; }
-        pushTri(p3[a * 3], p3[a * 3 + 1], p3[a * 3 + 2], p3[b * 3], p3[b * 3 + 1], p3[b * 3 + 2], p3[c * 3], p3[c * 3 + 1], p3[c * 3 + 2],
-          fc[0], fc[1], fc[2], alpha, cols);
-      }
-    }
-    if (state.edges || state.surf === 'wire') edgeLines(0, p3, edges, q, depth);
-  }
-
-  function edgeLines(which, p3, edges, q, depth) {
-    const wire = state.surf === 'wire', fg = theme.fg, bg = theme.canvas;
-    let base, a;
-    if (which) { base = fg; a = theme.dark ? 0.09 : 0.14; }
-    else if (state.surf === 'solid') { base = theme.dark ? bg : [0.1, 0.11, 0.16]; a = 0.55; }
-    else { base = fg; a = wire ? 0.75 : 0.32; }
-    const useDepth = depth && !which && state.surf !== 'solid';
-    for (let k = 0; k < edges.length; k += 2) {
-      const i = edges[k], j = edges[k + 1];
-      if (useDepth) {
-        depthColor(q[i * 4 + 3], vcol, 0); depthColor(q[j * 4 + 3], vcol, 3);
-        pushLine(which, p3[i * 3], p3[i * 3 + 1], p3[i * 3 + 2], p3[j * 3], p3[j * 3 + 1], p3[j * 3 + 2], vcol[0], vcol[1], vcol[2], wire ? 0.9 : 0.55, vcol[3], vcol[4], vcol[5]);
-      } else pushLine(which, p3[i * 3], p3[i * 3 + 1], p3[i * 3 + 2], p3[j * 3], p3[j * 3 + 1], p3[j * 3 + 2], base[0], base[1], base[2], a);
-    }
-  }
-
-  // slice: intersect every cell tetrahedron and every face triangle with the hyperplane w = s
-  const PAIRS = [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]];
-  const ix = new Float64Array(12);
-  function cross(i, j, s, k) { // point on segment i-j where w = s, stored in ix[k*3..]
-    const q = G.q, wi = q[i * 4 + 3], wj = q[j * 4 + 3], t = (s - wi) / (wj - wi);
-    ix[k * 3] = q[i * 4] + (q[j * 4] - q[i * 4]) * t;
-    ix[k * 3 + 1] = q[i * 4 + 1] + (q[j * 4 + 1] - q[i * 4 + 1]) * t;
-    ix[k * 3 + 2] = q[i * 4 + 2] + (q[j * 4 + 2] - q[i * 4 + 2]) * t;
-  }
-  function buildSlice() {
-    const { tet, tetCell, cellCol, q, ftri, nv, nf } = G, s = state.slice;
-    const depth = state.col === 'depth', alpha = state.surf === 'trans' ? state.opacity * 1.6 : 1;
-    const v = [0, 0, 0, 0], above = [false, false, false, false];
-    if (state.surf !== 'wire') {
-      for (let t = 0; t < tetCell.length; t++) {
-        let na = 0;
-        for (let k = 0; k < 4; k++) { v[k] = tet[t * 4 + k]; above[k] = q[v[k] * 4 + 3] > s; if (above[k]) na++; }
-        if (na === 0 || na === 4) continue;
-        const ci = tetCell[t];
-        let col = cellCol[ci];
-        if (depth) { depthColor(q[(nv + nf + ci) * 4 + 3], vcol, 0); col = vcol; }
-        const r = col[0], g = col[1], b = col[2];
-        if (na === 1 || na === 3) {
-          let n = 0;
-          for (const [i, j] of PAIRS) if (above[i] !== above[j]) cross(v[i], v[j], s, n++);
-          pushTri(ix[0], ix[1], ix[2], ix[3], ix[4], ix[5], ix[6], ix[7], ix[8], r, g, b, alpha);
-        } else {
-          // two above (a,b), two below (c,d): quad a-c, a-d, b-d, b-c
-          const A = [], B = [];
-          for (let k = 0; k < 4; k++) (above[k] ? A : B).push(v[k]);
-          cross(A[0], B[0], s, 0); cross(A[0], B[1], s, 1); cross(A[1], B[1], s, 2); cross(A[1], B[0], s, 3);
-          pushTri(ix[0], ix[1], ix[2], ix[3], ix[4], ix[5], ix[6], ix[7], ix[8], r, g, b, alpha);
-          pushTri(ix[0], ix[1], ix[2], ix[6], ix[7], ix[8], ix[9], ix[10], ix[11], r, g, b, alpha);
-        }
-      }
-    }
-    if (state.edges || state.surf === 'wire') {
-      const fg = theme.fg, wire = state.surf === 'wire';
-      const base = state.surf === 'solid' ? (theme.dark ? theme.canvas : [0.1, 0.11, 0.16]) : fg;
-      const a = state.surf === 'solid' ? 0.6 : wire ? 0.85 : 0.45;
-      for (let t = 0; t < ftri.length / 3; t++) {
-        const f = [ftri[t * 3], ftri[t * 3 + 1], ftri[t * 3 + 2]];
-        const up = f.map(i => q[i * 4 + 3] > s);
-        if (up[0] === up[1] && up[1] === up[2]) continue;
-        let n = 0;
-        for (const [i, j] of [[0, 1], [1, 2], [2, 0]]) if (up[i] !== up[j]) cross(f[i], f[j], s, n++);
-        if (wire && depth) {
-          const ci = G.T.faceCells[G.ftriFace[t]][0]; depthColor(q[(nv + nf + ci) * 4 + 3], vcol, 0);
-          pushLine(0, ix[0], ix[1], ix[2], ix[3], ix[4], ix[5], vcol[0], vcol[1], vcol[2], a);
-        } else pushLine(0, ix[0], ix[1], ix[2], ix[3], ix[4], ix[5], base[0], base[1], base[2], a);
-      }
-    }
-    if (state.ghost) edgeLines(1, G.p3, G.edges, q, false);
-  }
-
-  // ---------- frame ----------
-  let last = performance.now(), sweepPhase = 0, frameCount = 0;
-  const order = { idx: new Uint32Array(0) };
-  function frame(now) {
-    const dt = Math.min(0.05, (now - last) / 1000); last = now;
-    if (state.playing) {
-      PLANES.forEach(([, i, j], k) => { if (state.spin[k]) rotPlane(R, i, j, state.spin[k] * dt); });
-      if (++frameCount % 120 === 0) orthonormalize(R);
-    }
-    if (state.mode === 'slice' && state.sweep && state.playing) {
-      sweepPhase += dt * state.sweepSp * 2;
-      state.slice = 0.999 * Math.sin(sweepPhase);
-      $('slice').value = state.slice; $('sliceO').value = state.slice.toFixed(3);
-    }
-    if (state.mode === 'slice') $('wread').textContent = `w = ${state.slice >= 0 ? '+' : '−'}${Math.abs(state.slice).toFixed(3)}`;
-
-    const dpr = Math.min(devicePixelRatio || 1, 2);
-    const W = Math.round(canvas.clientWidth * dpr), H = Math.round(canvas.clientHeight * dpr);
-    if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
-    gl.viewport(0, 0, W, H);
-    const c = theme.canvas; gl.clearColor(c[0], c[1], c[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-    const view = viewMat(), asp = W / Math.max(1, H), fov = 0.62;
-    const proj = state.p3 === 'persp' ? matPersp(fov, asp, 0.05, 60) : matOrtho(state.dist * Math.tan(fov / 2), asp, -30, 60);
-
-    nTri = 0; nLine = 0; nGhost = 0;
-    transform();
-    if (state.mode === 'proj') buildProjection(); else buildSlice();
-
-    // triangles
-    if (nTri) {
-      const trans = state.surf === 'trans';
-      let data = triRaw;
-      if (trans) {
-        if (order.idx.length < nTri) order.idx = new Uint32Array(Math.ceil(nTri * 1.5));
-        const idx = order.idx.subarray(0, nTri);
-        for (let i = 0; i < nTri; i++) idx[i] = i;
-        idx.sort((a, b) => triKey[a] - triKey[b]); // farthest first
-        for (let i = 0; i < nTri; i++) triOut.set(triRaw.subarray(idx[i] * 30, idx[i] * 30 + 30), i * 30);
-        data = triOut;
-      }
-      gl.useProgram(triProg);
-      gl.uniformMatrix4fv(gl.getUniformLocation(triProg, 'uProj'), false, proj);
-      gl.uniformMatrix4fv(gl.getUniformLocation(triProg, 'uView'), false, view);
-      gl.uniform1f(gl.getUniformLocation(triProg, 'uOrtho'), state.p3 === 'ortho' ? 1 : 0);
-      gl.bindVertexArray(triVAO.vao); upload(triVAO, data, nTri * 30);
-      gl.enable(gl.DEPTH_TEST); gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1, 1);
-      if (trans) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false); }
-      else { gl.disable(gl.BLEND); gl.depthMask(true); }
-      gl.drawArrays(gl.TRIANGLES, 0, nTri * 3);
-      gl.disable(gl.POLYGON_OFFSET_FILL); gl.depthMask(true);
-    }
-    // lines
-    gl.useProgram(lineProg);
-    gl.uniformMatrix4fv(gl.getUniformLocation(lineProg, 'uProj'), false, proj);
-    gl.uniformMatrix4fv(gl.getUniformLocation(lineProg, 'uView'), false, view);
-    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    if (nLine) {
-      gl.bindVertexArray(lineVAO.vao); upload(lineVAO, lineBuf, nLine * 14);
-      if (state.surf === 'solid') gl.enable(gl.DEPTH_TEST); else gl.disable(gl.DEPTH_TEST);
-      gl.depthMask(false); gl.drawArrays(gl.LINES, 0, nLine * 2); gl.depthMask(true);
-    }
-    if (nGhost) {
-      gl.disable(gl.DEPTH_TEST);
-      gl.bindVertexArray(ghostVAO.vao); upload(ghostVAO, ghostBuf, nGhost * 14);
-      gl.drawArrays(gl.LINES, 0, nGhost * 2);
-    }
-    gl.bindVertexArray(null);
-    requestAnimationFrame(frame);
-  }
-
-  // ---------- pointer ----------
-  const pointers = new Map(); let pinch0 = 0, dist0 = 0;
-  canvas.addEventListener('contextmenu', e => e.preventDefault());
-  canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, four: e.shiftKey || e.button === 2 }); if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); dist0 = state.dist; } });
-  canvas.addEventListener('pointermove', e => {
-    const p = pointers.get(e.pointerId); if (!p) return;
-    const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
-    if (pointers.size === 2) { const [a, b] = [...pointers.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); if (pinch0) state.dist = Math.max(1.5, Math.min(14, dist0 * pinch0 / d)); return; }
-    if (p.four || e.shiftKey) {
-      // rotate in the view-aligned planes so the drag matches what you see
-      rotPlane(R, 0, 3, dx * 0.008); rotPlane(R, 1, 3, -dy * 0.008);
-    } else {
-      state.yaw += dx * 0.008; state.pitch = Math.max(-1.5, Math.min(1.5, state.pitch + dy * 0.008));
-    }
-  });
-  const up = e => { pointers.delete(e.pointerId); pinch0 = 0; };
-  canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
-  canvas.addEventListener('wheel', e => { e.preventDefault(); state.dist = Math.max(1.5, Math.min(14, state.dist * Math.exp(e.deltaY * 0.0012))); }, { passive: false });
-
-  if (location.hash === '#sliced') { state.mode = 'slice'; state.slice = 0.35; }
-  load(state.id);
-  requestAnimationFrame(frame);
-})();
-</script>
+<script src="objects.js"></script>
+<script src="app.js"></script>

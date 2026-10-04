@@ -1,0 +1,659 @@
+(() => {
+  const $ = id => document.getElementById(id);
+  const P = window.Polychora, O = window.Objects;
+  const canvas = $('gl');
+  const gl = canvas.getContext('webgl2', { antialias: true, premultipliedAlpha: false });
+  if (!gl) { $('err').hidden = false; $('err').textContent = 'This viewer needs WebGL2, which this browser has turned off or does not support.'; return; }
+
+  // ---------- object catalogue ----------
+  const OBJECTS = [];
+  for (const s of P.CATALOG) OBJECTS.push({ key: 'poly:' + s.id, label: `${s.name}  ${s.sym}`, group: s.kind === 'convex' ? 'Convex regular polychora' : 'Schläfli–Hess star polychora', kind: 'poly', id: s.id });
+  OBJECTS.push({ key: 'clifford', label: 'Clifford torus', group: 'Surfaces & fibrations in S³', kind: 'clifford', s3: true });
+  OBJECTS.push({ key: 'hopf', label: 'Hopf fibration', group: 'Surfaces & fibrations in S³', kind: 'hopf', s3: true });
+  for (const [k, F] of Object.entries(O.FRACTALS)) OBJECTS.push({ key: 'frac:' + k, label: F.name, group: 'Sierpinski fractals', kind: 'frac', id: k });
+
+  const rings = p => p.pattern === 'rings';
+  function paramDefs(o) {
+    if (o.kind === 'poly') return [{ id: 'shrink', label: 'Cell shrink', min: 0.2, max: 1, step: 0.01, def: 1, fmt: 2 }];
+    if (o.kind === 'clifford') return [
+      { id: 'eta', label: 'η', min: 3, max: 87, step: 0.5, def: 45, fmt: 1, unit: '°', title: '45° gives the Clifford torus; other values give flatter tori' },
+      { id: 'thick', label: 'Thickness', min: 0, max: 15, step: 0.5, def: 0, fmt: 1, unit: '°', title: 'Above 0 the torus becomes a solid shell, so slices are surfaces' },
+      { id: 'res', label: 'Resolution', min: 16, max: 128, step: 8, def: 64 },
+      { id: 'grid', label: 'Grid lines', min: 0, max: 32, step: 1, def: 12 },
+      { id: 'knot', label: 'Torus knot', type: 'check', def: true },
+      { id: 'p', label: 'Knot p', min: -7, max: 7, step: 1, def: 3, show: p => p.knot },
+      { id: 'q', label: 'Knot q', min: -7, max: 7, step: 1, def: 2, show: p => p.knot },
+      { id: 'tube', label: 'Tube radius', min: 0.005, max: 0.08, step: 0.001, def: 0.022, fmt: 3 },
+    ];
+    if (o.kind === 'hopf') return [
+      { id: 'pattern', label: 'Base points', type: 'select', options: [['rings', 'Latitude rings'], ['sphere', 'Spread over S²'], ['circle', 'One great circle']], def: 'rings' },
+      { id: 'rings', label: 'Rings', min: 1, max: 8, step: 1, def: 5, show: rings },
+      { id: 'perRing', label: 'Per ring', min: 3, max: 48, step: 1, def: 14, show: rings },
+      { id: 'lat', label: 'Latitude', min: 5, max: 175, step: 1, def: 90, unit: '°', show: rings },
+      { id: 'spread', label: 'Spread', min: 0, max: 170, step: 1, def: 110, unit: '°', show: rings },
+      { id: 'count', label: 'Fibres', min: 4, max: 240, step: 1, def: 60, show: p => !rings(p) },
+      { id: 'tilt', label: 'Tilt', min: 0, max: 90, step: 1, def: 35, unit: '°', show: p => p.pattern === 'circle' },
+      { id: 'phase', label: 'Phase', min: 0, max: 360, step: 1, def: 0, unit: '°' },
+      { id: 'flow', label: 'Flow', min: -90, max: 90, step: 1, def: 0, unit: '°/s', title: 'Moves the base points around S², so the fibres sweep through S³' },
+      { id: 'segs', label: 'Segments', min: 24, max: 192, step: 8, def: 96 },
+      { id: 'tube', label: 'Tube radius', min: 0.004, max: 0.06, step: 0.001, def: 0.018, fmt: 3 },
+      { id: 'tori', label: 'Hopf tori', type: 'check', def: false, show: rings },
+    ];
+    const F = O.FRACTALS[o.id];
+    const defs = [{ id: 'depth', label: 'Depth', min: 0, max: F.maxDepth, step: 1, def: F.depth }];
+    if (F.ratio) defs.push({ id: 'ratio', label: 'Ratio r', min: 0.25, max: 0.62, step: 0.005, def: F.ratioDefault ?? 0.5, fmt: 3 });
+    return defs;
+  }
+  const paramStore = {};
+  const params = o => paramStore[o.key] ??= Object.fromEntries(paramDefs(o).map(d => [d.id, d.def]));
+
+  // ---------- UI state ----------
+  const PLANES = [['XY', 0, 1], ['XZ', 0, 2], ['YZ', 1, 2], ['XW', 0, 3], ['YW', 1, 3], ['ZW', 2, 3]];
+  const state = {
+    key: 'poly:small-stellated', mode: 'proj', surf: 'solid', col: 'depth', p4: 'persp', p3: 'persp',
+    edges: true, ghost: true, opacity: 0.18, eye4: 2.6, slice: 0, sweep: false, sweepSp: 0.25,
+    spin: [0, 0, 0.12, 0.3, 0, 0.18], playing: true,
+    yaw: 0.5, pitch: -0.35, dist: 3.7,
+  };
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) state.playing = false;
+  const cur = () => OBJECTS.find(o => o.key === state.key);
+
+  const sel = $('obj');
+  for (const g of [...new Set(OBJECTS.map(o => o.group))]) {
+    const og = document.createElement('optgroup'); og.label = g;
+    for (const o of OBJECTS.filter(o => o.group === g)) { const op = document.createElement('option'); op.value = o.key; op.textContent = o.label; og.appendChild(op); }
+    sel.appendChild(og);
+  }
+
+  PLANES.forEach(([nm], i) => {
+    const r = document.createElement('div'); r.className = 'row';
+    r.innerHTML = `<label for="sp${i}">${nm}</label><input type="range" id="sp${i}" min="-1.2" max="1.2" step="0.01"><output id="sp${i}O"></output>`;
+    $('spins').appendChild(r);
+    r.querySelector('input').addEventListener('input', e => { state.spin[i] = +e.target.value; syncUI(); });
+  });
+
+  const fmtVal = (d, v) => (d.fmt ? (+v).toFixed(d.fmt) : String(v)) + (d.unit || '');
+  function buildParamUI() {
+    const o = cur(), prm = params(o), box = $('params'), defs = paramDefs(o);
+    box.innerHTML = '';
+    for (const d of defs) {
+      const r = document.createElement('div'), id = 'prm-' + d.id;
+      r.className = 'row' + (d.type === 'check' ? ' check' : ''); r.dataset.id = d.id; if (d.title) r.title = d.title;
+      if (d.type === 'select') r.innerHTML = `<label for="${id}">${d.label}</label><select id="${id}">${d.options.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select>`;
+      else if (d.type === 'check') r.innerHTML = `<label for="${id}">${d.label}</label><input type="checkbox" id="${id}">`;
+      else r.innerHTML = `<label for="${id}">${d.label}</label><input type="range" id="${id}" min="${d.min}" max="${d.max}" step="${d.step}"><output></output>`;
+      box.appendChild(r);
+      const inp = r.querySelector('input,select');
+      if (d.type === 'check') inp.checked = prm[d.id]; else inp.value = prm[d.id];
+      const out = r.querySelector('output'); if (out) out.value = fmtVal(d, prm[d.id]);
+      inp.addEventListener(d.type === 'range' || !d.type ? 'input' : 'change', () => {
+        prm[d.id] = d.type === 'check' ? inp.checked : d.type === 'select' ? inp.value : +inp.value;
+        if (out) out.value = fmtVal(d, prm[d.id]);
+        refreshParamVisibility(); dirty = true;
+      });
+    }
+    refreshParamVisibility();
+  }
+  function refreshParamVisibility() {
+    const o = cur(), prm = params(o);
+    for (const d of paramDefs(o)) { const r = $('params').querySelector(`[data-id="${d.id}"]`); if (r) r.hidden = d.show ? !d.show(prm) : false; }
+  }
+
+  function syncUI() {
+    sel.value = state.key;
+    for (const n of ['mode', 'surf', 'col', 'p4', 'p3']) document.querySelector(`input[name=${n}][value=${state[n]}]`).checked = true;
+    $('edges').checked = state.edges; $('ghost').checked = state.ghost; $('sweep').checked = state.sweep;
+    $('opacity').value = state.opacity; $('opacityO').value = state.opacity.toFixed(2);
+    $('eye4').value = state.eye4; $('eye4O').value = state.eye4.toFixed(2);
+    $('slice').value = state.slice; $('sliceO').value = state.slice.toFixed(3);
+    $('sweepSp').value = state.sweepSp; $('sweepSpO').value = state.sweepSp.toFixed(2);
+    PLANES.forEach((_, i) => { $('sp' + i).value = state.spin[i]; $('sp' + i + 'O').value = state.spin[i].toFixed(2); });
+    const slice = state.mode === 'slice';
+    $('sliceSec').hidden = !slice; $('projSec').hidden = slice; $('ghostL').hidden = !slice;
+    $('eyeRow').hidden = state.p4 !== 'persp'; $('stereoHint').hidden = state.p4 !== 'stereo';
+    $('opRow').hidden = state.surf !== 'trans';
+    $('legend').hidden = state.col !== 'depth';
+    $('wread').hidden = !slice;
+    $('play').textContent = state.playing ? 'Pause' : 'Play';
+  }
+
+  for (const n of ['mode', 'surf', 'col', 'p4', 'p3'])
+    document.querySelectorAll(`input[name=${n}]`).forEach(r => r.addEventListener('change', () => { state[n] = r.value; syncUI(); }));
+  $('edges').addEventListener('change', e => { state.edges = e.target.checked; });
+  $('ghost').addEventListener('change', e => { state.ghost = e.target.checked; });
+  $('sweep').addEventListener('change', e => { state.sweep = e.target.checked; if (state.sweep) sweepPhase = Math.asin(Math.max(-1, Math.min(1, state.slice / 0.999))); });
+  for (const k of ['opacity', 'eye4', 'sweepSp']) $(k).addEventListener('input', e => { state[k] = +e.target.value; syncUI(); });
+  $('slice').addEventListener('input', e => { state.slice = +e.target.value; state.sweep = false; syncUI(); });
+  sel.addEventListener('change', () => select(sel.value));
+  const step = d => { const i = OBJECTS.findIndex(o => o.key === state.key); select(OBJECTS[(i + d + OBJECTS.length) % OBJECTS.length].key); };
+  $('prev').onclick = () => step(-1); $('next').onclick = () => step(1);
+  $('play').onclick = () => { state.playing = !state.playing; syncUI(); };
+  $('stopSpin').onclick = () => { state.spin = [0, 0, 0, 0, 0, 0]; syncUI(); };
+  $('reset').onclick = () => { R = initialPose(); };
+  const preset = s => () => { state.spin = s; state.playing = true; syncUI(); };
+  $('presetSimple').onclick = preset([0, 0, 0, 0.4, 0, 0]);
+  $('presetDouble').onclick = preset([0, 0, 0.12, 0.3, 0, 0.18]);
+  $('presetIso').onclick = preset([0.35, 0, 0, 0, 0, 0.35]);
+  addEventListener('keydown', e => {
+    const t = e.target;
+    if (t.tagName === 'SELECT' || (t.tagName === 'INPUT' && !['range', 'checkbox', 'radio'].includes(t.type))) return;
+    if (e.key === ' ') { e.preventDefault(); state.playing = !state.playing; syncUI(); }
+    else if (e.key === '[') step(-1);
+    else if (e.key === ']') step(1);
+    else if (e.key === 's' || e.key === 'S') { state.mode = state.mode === 'slice' ? 'proj' : 'slice'; syncUI(); }
+  });
+
+  // ---------- 4D pose ----------
+  // Spins act in the object's own frame (R <- R·G), so an equal XY + ZW spin always slides along Hopf fibres.
+  // Hand dragging acts in the view frame (R <- G·R), so it matches what you see.
+  const ident4 = () => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  function rotWorld(M, i, j, a) {
+    const c = Math.cos(a), s = Math.sin(a);
+    for (let k = 0; k < 4; k++) { const x = M[i * 4 + k], y = M[j * 4 + k]; M[i * 4 + k] = c * x - s * y; M[j * 4 + k] = s * x + c * y; }
+  }
+  function rotBody(M, i, j, a) {
+    const c = Math.cos(a), s = Math.sin(a);
+    for (let r = 0; r < 4; r++) { const x = M[r * 4 + i], y = M[r * 4 + j]; M[r * 4 + i] = c * x + s * y; M[r * 4 + j] = -s * x + c * y; }
+  }
+  function orthonormalize(M) {
+    for (let r = 0; r < 4; r++) {
+      for (let q = 0; q < r; q++) {
+        let d = 0; for (let k = 0; k < 4; k++) d += M[r * 4 + k] * M[q * 4 + k];
+        for (let k = 0; k < 4; k++) M[r * 4 + k] -= d * M[q * 4 + k];
+      }
+      let l = 0; for (let k = 0; k < 4; k++) l += M[r * 4 + k] ** 2; l = Math.sqrt(l);
+      for (let k = 0; k < 4; k++) M[r * 4 + k] /= l;
+    }
+  }
+  function initialPose() {
+    const M = ident4();
+    if (cur().s3) { rotWorld(M, 1, 2, 0.5); return M; } // keep the torus axes readable in stereographic view
+    rotWorld(M, 0, 3, 0.31); rotWorld(M, 1, 2, 0.23); rotWorld(M, 2, 3, 0.17); rotWorld(M, 0, 1, 0.11); return M;
+  }
+  let R = ident4();
+
+  // ---------- colours ----------
+  const DEPTH_STOPS = [[0x3d, 0x4e, 0xd6], [0x1f, 0xb5, 0xb0], [0xf2, 0xc1, 0x4e], [0xee, 0x5d, 0x4a]].map(c => c.map(x => x / 255));
+  function depthColor(w, out, o) {
+    const t = Math.max(0, Math.min(1, (w + 1) / 2)) * (DEPTH_STOPS.length - 1);
+    const k = Math.min(DEPTH_STOPS.length - 2, Math.floor(t)), f = t - k, a = DEPTH_STOPS[k], b = DEPTH_STOPS[k + 1];
+    out[o] = a[0] + (b[0] - a[0]) * f; out[o + 1] = a[1] + (b[1] - a[1]) * f; out[o + 2] = a[2] + (b[2] - a[2]) * f;
+  }
+  const hex = s => { s = s.trim().replace('#', ''); return [0, 2, 4].map(i => parseInt(s.slice(i, i + 2), 16) / 255); };
+  let theme = {};
+  function readTheme() {
+    const cs = getComputedStyle(document.documentElement);
+    theme = { canvas: hex(cs.getPropertyValue('--canvas')), fg: hex(cs.getPropertyValue('--fg')) };
+    theme.dark = theme.canvas[0] + theme.canvas[1] + theme.canvas[2] < 1.5;
+  }
+  readTheme();
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readTheme);
+  new MutationObserver(readTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  // ---------- object loading ----------
+  let G = null, dirty = true, hopfTime = 0, lastInfo = '';
+  function select(key) {
+    const was = cur();
+    state.key = key;
+    const o = cur();
+    if (!was || was.s3 !== o.s3 || was.kind !== o.kind) {
+      if (o.s3) { state.p4 = 'stereo'; state.dist = 7.5; }
+      else { if (state.p4 === 'stereo') state.p4 = 'persp'; state.dist = 3.7; }
+      if (o.kind === 'hopf') state.col = 'flat'; // fibres coloured by their point on S²
+      R = initialPose();
+    }
+    buildParamUI(); dirty = true; syncUI();
+  }
+  function rebuild() {
+    const o = cur(), prm = params(o);
+    const m = o.kind === 'poly' ? O.polytope(o.id, prm) : o.kind === 'clifford' ? O.clifford(prm) : o.kind === 'hopf' ? O.hopf(prm, hopfTime) : O.fractal(o.id, prm);
+    m.q = new Float64Array(m.npts * 4); m.p3 = new Float64Array(m.npts * 3); m.ok = new Uint8Array(m.npts);
+    G = m;
+    const info = JSON.stringify(m.info);
+    if (info !== lastInfo) {
+      lastInfo = info;
+      $('pname').textContent = m.info.name; $('psym').textContent = m.info.sub;
+      $('counts').innerHTML = m.info.counts.map(([l, v]) => `<div><b>${v}</b><span>${l}</span></div>`).join('');
+      $('rows').innerHTML = m.info.rows.map(([t, d]) => `<dt>${t}</dt><dd>${d}</dd>`).join('');
+    }
+  }
+
+  // ---------- GL ----------
+  function prog(vs, fs) {
+    const mk = (t, src) => { const s = gl.createShader(t); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
+    const p = gl.createProgram(); gl.attachShader(p, mk(gl.VERTEX_SHADER, vs)); gl.attachShader(p, mk(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    return p;
+  }
+  const triProg = prog(`#version 300 es
+    in vec3 aPos; in vec3 aNor; in vec4 aCol;
+    uniform mat4 uProj, uView;
+    out vec3 vN; out vec4 vC; out vec3 vV;
+    void main() { vec4 p = uView * vec4(aPos, 1.0); vV = p.xyz; vN = mat3(uView) * aNor; vC = aCol; gl_Position = uProj * p; }`,
+  `#version 300 es
+    precision highp float;
+    in vec3 vN; in vec4 vC; in vec3 vV; uniform float uOrtho; out vec4 o;
+    void main() {
+      vec3 n = normalize(vN); vec3 v = uOrtho > 0.5 ? vec3(0, 0, 1) : normalize(-vV);
+      if (dot(n, v) < 0.0) n = -n;
+      vec3 L = normalize(vec3(-0.45, 0.7, 0.55));
+      float d = max(dot(n, L), 0.0), f = max(dot(n, normalize(vec3(0.6, -0.3, 0.75))), 0.0);
+      float s = pow(max(dot(n, normalize(L + v)), 0.0), 48.0);
+      o = vec4(vC.rgb * (0.30 + 0.62 * d + 0.20 * f) + 0.16 * s, vC.a);
+    }`);
+  const lineProg = prog(`#version 300 es
+    in vec3 aPos; in vec4 aCol; uniform mat4 uProj, uView; out vec4 vC;
+    void main() { vC = aCol; gl_Position = uProj * uView * vec4(aPos, 1.0); }`,
+  `#version 300 es
+    precision highp float; in vec4 vC; out vec4 o; void main() { o = vC; }`);
+  const U = {};
+  for (const [p, names] of [[triProg, ['uProj', 'uView', 'uOrtho']], [lineProg, ['uProj', 'uView']]])
+    U[p === triProg ? 'tri' : 'line'] = Object.fromEntries(names.map(n => [n, gl.getUniformLocation(p, n)]));
+
+  function makeVAO(p, layout) {
+    const vao = gl.createVertexArray(), buf = gl.createBuffer();
+    gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    const stride = layout.reduce((s, [, n]) => s + n, 0) * 4; let off = 0;
+    for (const [name, n] of layout) { const loc = gl.getAttribLocation(p, name); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, n, gl.FLOAT, false, stride, off); off += n * 4; }
+    gl.bindVertexArray(null);
+    return { vao, buf, cap: 0 };
+  }
+  const triVAO = makeVAO(triProg, [['aPos', 3], ['aNor', 3], ['aCol', 4]]);
+  const lineVAO = makeVAO(lineProg, [['aPos', 3], ['aCol', 4]]);
+  const ghostVAO = makeVAO(lineProg, [['aPos', 3], ['aCol', 4]]);
+  function upload(v, data, n) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, v.buf);
+    if (n > v.cap) { v.cap = Math.ceil(n * 1.5); gl.bufferData(gl.ARRAY_BUFFER, v.cap * 4, gl.DYNAMIC_DRAW); }
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, data, 0, n);
+  }
+
+  // ---------- triangle / line emitters ----------
+  let triRaw = new Float32Array(30 * 8192), triKey = new Float32Array(8192), triOut = new Float32Array(30 * 8192);
+  let lineBuf = new Float32Array(14 * 8192), ghostBuf = new Float32Array(14 * 8192);
+  let nTri = 0, nLine = 0, nGhost = 0;
+  const camF = [0, 0, 1];
+  // scratch triangle: positions TV, normals TN, colours TC (3 vertices each)
+  const TV = new Float64Array(9), TN = new Float64Array(9), TC = new Float64Array(9);
+  function commit(a) {
+    if (nTri >= triKey.length) {
+      const m = Math.ceil(triKey.length * 1.6), r = new Float32Array(m * 30); r.set(triRaw); triRaw = r;
+      triOut = new Float32Array(m * 30); const k = new Float32Array(m); k.set(triKey); triKey = k;
+    }
+    const o = nTri * 30, T = triRaw;
+    for (let v = 0; v < 3; v++) {
+      const p = o + v * 10, s = v * 3;
+      T[p] = TV[s]; T[p + 1] = TV[s + 1]; T[p + 2] = TV[s + 2];
+      T[p + 3] = TN[s]; T[p + 4] = TN[s + 1]; T[p + 5] = TN[s + 2];
+      T[p + 6] = TC[s]; T[p + 7] = TC[s + 1]; T[p + 8] = TC[s + 2]; T[p + 9] = a;
+    }
+    triKey[nTri++] = (TV[0] + TV[3] + TV[6]) * camF[0] + (TV[1] + TV[4] + TV[7]) * camF[1] + (TV[2] + TV[5] + TV[8]) * camF[2];
+  }
+  function flatNormal() {
+    const ux = TV[3] - TV[0], uy = TV[4] - TV[1], uz = TV[5] - TV[2], vx = TV[6] - TV[0], vy = TV[7] - TV[1], vz = TV[8] - TV[2];
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const l = Math.hypot(nx, ny, nz); if (!(l > 1e-14)) return false;
+    nx /= l; ny /= l; nz /= l;
+    for (let v = 0; v < 9; v += 3) { TN[v] = nx; TN[v + 1] = ny; TN[v + 2] = nz; }
+    return true;
+  }
+  const setV = (v, A, i) => { TV[v * 3] = A[i]; TV[v * 3 + 1] = A[i + 1]; TV[v * 3 + 2] = A[i + 2]; };
+  function colAll(r, g, b) { for (let v = 0; v < 9; v += 3) { TC[v] = r; TC[v + 1] = g; TC[v + 2] = b; } }
+  function ensureLine(which, n) {
+    const b = which ? ghostBuf : lineBuf; if (n * 14 <= b.length) return b;
+    const a = new Float32Array(Math.ceil(n * 1.6) * 14); a.set(b); if (which) ghostBuf = a; else lineBuf = a; return a;
+  }
+  function pushLine(which, A, i, B, j, r, g, b, a, r2 = r, g2 = g, b2 = b) {
+    const n = which ? nGhost : nLine, L = ensureLine(which, n + 1), o = n * 14;
+    L[o] = A[i]; L[o + 1] = A[i + 1]; L[o + 2] = A[i + 2]; L[o + 3] = r; L[o + 4] = g; L[o + 5] = b; L[o + 6] = a;
+    L[o + 7] = B[j]; L[o + 8] = B[j + 1]; L[o + 9] = B[j + 2]; L[o + 10] = r2; L[o + 11] = g2; L[o + 12] = b2; L[o + 13] = a;
+    if (which) nGhost++; else nLine++;
+  }
+
+  // ---------- tubes and spheres ----------
+  const SIDES = 8, RING_COS = [], RING_SIN = [];
+  for (let k = 0; k <= SIDES; k++) { RING_COS.push(Math.cos(2 * Math.PI * k / SIDES)); RING_SIN.push(Math.sin(2 * Math.PI * k / SIDES)); }
+  let ringBuf = new Float64Array(0), ringCol = new Float64Array(0);
+  // idx: point indices into G.p3 (one run of valid points); col(i, out, o) fills colour for run position i
+  function tube(idx, n, closed, r, col, alpha) {
+    if (n < 2) return;
+    const P3 = G.p3, need = n * (SIDES + 1) * 6;
+    if (ringBuf.length < need) { ringBuf = new Float64Array(need * 1.5); ringCol = new Float64Array(n * 4.5); }
+    if (ringCol.length < n * 3) ringCol = new Float64Array(n * 4.5);
+    let ux = 0, uy = 0, uz = 0;
+    for (let i = 0; i < n; i++) {
+      const a = idx[i] * 3, prv = idx[closed ? (i - 1 + n) % n : Math.max(0, i - 1)] * 3, nxt = idx[closed ? (i + 1) % n : Math.min(n - 1, i + 1)] * 3;
+      let tx = P3[nxt] - P3[prv], ty = P3[nxt + 1] - P3[prv + 1], tz = P3[nxt + 2] - P3[prv + 2];
+      const tl = Math.hypot(tx, ty, tz) || 1; tx /= tl; ty /= tl; tz /= tl;
+      if (i === 0) { if (Math.abs(tx) < 0.9) { ux = 0; uy = -tz; uz = ty; } else { ux = tz; uy = 0; uz = -tx; } }
+      // parallel transport the frame
+      const d = ux * tx + uy * ty + uz * tz; ux -= d * tx; uy -= d * ty; uz -= d * tz;
+      let ul = Math.hypot(ux, uy, uz);
+      if (ul < 1e-9) { if (Math.abs(tx) < 0.9) { ux = 0; uy = -tz; uz = ty; } else { ux = tz; uy = 0; uz = -tx; } ul = Math.hypot(ux, uy, uz); }
+      ux /= ul; uy /= ul; uz /= ul;
+      const vx = ty * uz - tz * uy, vy = tz * ux - tx * uz, vz = tx * uy - ty * ux;
+      for (let k = 0; k <= SIDES; k++) {
+        const c = RING_COS[k], s = RING_SIN[k], nx = c * ux + s * vx, ny = c * uy + s * vy, nz = c * uz + s * vz, o = (i * (SIDES + 1) + k) * 6;
+        ringBuf[o] = P3[a] + r * nx; ringBuf[o + 1] = P3[a + 1] + r * ny; ringBuf[o + 2] = P3[a + 2] + r * nz;
+        ringBuf[o + 3] = nx; ringBuf[o + 4] = ny; ringBuf[o + 5] = nz;
+      }
+      col(i, ringCol, i * 3);
+    }
+    const segs = closed ? n : n - 1;
+    const put = (v, ring, k) => {
+      const o = (ring * (SIDES + 1) + k) * 6;
+      TV[v * 3] = ringBuf[o]; TV[v * 3 + 1] = ringBuf[o + 1]; TV[v * 3 + 2] = ringBuf[o + 2];
+      TN[v * 3] = ringBuf[o + 3]; TN[v * 3 + 1] = ringBuf[o + 4]; TN[v * 3 + 2] = ringBuf[o + 5];
+      TC[v * 3] = ringCol[ring * 3]; TC[v * 3 + 1] = ringCol[ring * 3 + 1]; TC[v * 3 + 2] = ringCol[ring * 3 + 2];
+    };
+    for (let i = 0; i < segs; i++) {
+      const j = (i + 1) % n;
+      for (let k = 0; k < SIDES; k++) {
+        put(0, i, k); put(1, j, k); put(2, j, k + 1); commit(alpha);
+        put(0, i, k); put(1, j, k + 1); put(2, i, k + 1); commit(alpha);
+      }
+    }
+  }
+  // short straight tube between two 3D points (slice curves)
+  const segIdx = new Int32Array(2);
+  let segPts = new Float64Array(6);
+  function segTube(A, i, B, j, r, cr, cg, cb, alpha) {
+    const save = G.p3;
+    segPts[0] = A[i]; segPts[1] = A[i + 1]; segPts[2] = A[i + 2]; segPts[3] = B[j]; segPts[4] = B[j + 1]; segPts[5] = B[j + 2];
+    G.p3 = segPts; segIdx[0] = 0; segIdx[1] = 1;
+    tube(segIdx, 2, false, r, (k, out, o) => { out[o] = cr; out[o + 1] = cg; out[o + 2] = cb; }, alpha);
+    G.p3 = save;
+  }
+  // unit sphere (subdivided icosahedron)
+  const SPHERE = (() => {
+    const t = (1 + Math.sqrt(5)) / 2;
+    let V = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]];
+    let F = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+    const nv = v => { const l = Math.hypot(...v); return v.map(x => x / l); };
+    V = V.map(nv);
+    const mid = new Map(), m = (a, b) => { const k = a < b ? a + '_' + b : b + '_' + a; if (!mid.has(k)) { mid.set(k, V.length); V.push(nv(V[a].map((x, i) => (x + V[b][i]) / 2))); } return mid.get(k); };
+    F = F.flatMap(([a, b, c]) => { const ab = m(a, b), bc = m(b, c), ca = m(c, a); return [[a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]]; });
+    return { V, F };
+  })();
+  function sphere(x, y, z, r, cr, cg, cb, alpha) {
+    for (const f of SPHERE.F) {
+      for (let v = 0; v < 3; v++) {
+        const p = SPHERE.V[f[v]];
+        TV[v * 3] = x + r * p[0]; TV[v * 3 + 1] = y + r * p[1]; TV[v * 3 + 2] = z + r * p[2];
+        TN[v * 3] = p[0]; TN[v * 3 + 1] = p[1]; TN[v * 3 + 2] = p[2];
+      }
+      colAll(cr, cg, cb); commit(alpha);
+    }
+  }
+
+  // ---------- camera ----------
+  function matPersp(fovy, asp, n, f) { const t = 1 / Math.tan(fovy / 2); return [t / asp, 0, 0, 0, 0, t, 0, 0, 0, 0, (f + n) / (n - f), -1, 0, 0, 2 * f * n / (n - f), 0]; }
+  function matOrtho(h, asp, n, f) { return [1 / (h * asp), 0, 0, 0, 0, 1 / h, 0, 0, 0, 0, -2 / (f - n), 0, 0, 0, -(f + n) / (f - n), 1]; }
+  function viewMat() {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw), cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const m = [cy, sp * sy, -cp * sy, 0, 0, cp, sp, 0, sy, -sp * cy, cp * cy, 0, 0, 0, -state.dist, 1];
+    camF[0] = m[2]; camF[1] = m[6]; camF[2] = m[10];
+    return m;
+  }
+
+  // ---------- per-frame geometry ----------
+  const STEREO_K = 0.5, LIMIT = 9;
+  function transform() {
+    const { pts, npts, q, p3, ok } = G, M = R;
+    const mode = state.mode === 'slice' ? 'ortho' : state.p4, D = state.eye4;
+    for (let i = 0; i < npts; i++) {
+      const o = i * 4, x = pts[o], y = pts[o + 1], z = pts[o + 2], w = pts[o + 3];
+      for (let r = 0; r < 4; r++) q[o + r] = M[r * 4] * x + M[r * 4 + 1] * y + M[r * 4 + 2] * z + M[r * 4 + 3] * w;
+      const qw = q[o + 3];
+      let s = 1, good = 1;
+      if (mode === 'persp') s = (D - 1) / (D - qw);
+      else if (mode === 'stereo') { const den = 1 - qw; if (den < 1e-3) { good = 0; s = 0; } else s = STEREO_K / den; }
+      const X = q[o] * s, Y = q[o + 1] * s, Z = q[o + 2] * s;
+      if (good && X * X + Y * Y + Z * Z > LIMIT * LIMIT) good = 0;
+      p3[i * 3] = X; p3[i * 3 + 1] = Y; p3[i * 3 + 2] = Z; ok[i] = good;
+    }
+  }
+
+  function edgeStyle(which) {
+    if (which) return [theme.fg, theme.dark ? 0.09 : 0.14];
+    if (state.surf === 'solid') return [theme.dark ? theme.canvas : [0.1, 0.11, 0.16], 0.55];
+    return [theme.fg, state.surf === 'wire' ? 0.75 : 0.32];
+  }
+  const vcol = new Float64Array(6);
+  function edgeLines(which, depth) {
+    const { edges, q, p3, ok } = G, [base, a] = edgeStyle(which);
+    const useDepth = depth && !which && state.surf !== 'solid', wire = state.surf === 'wire';
+    for (let k = 0; k < edges.length; k += 2) {
+      const i = edges[k], j = edges[k + 1];
+      if (!ok[i] || !ok[j]) continue;
+      if (useDepth) {
+        depthColor(q[i * 4 + 3], vcol, 0); depthColor(q[j * 4 + 3], vcol, 3);
+        pushLine(which, p3, i * 3, p3, j * 3, vcol[0], vcol[1], vcol[2], wire ? 0.9 : 0.55, vcol[3], vcol[4], vcol[5]);
+      } else pushLine(which, p3, i * 3, p3, j * 3, base[0], base[1], base[2], a);
+    }
+  }
+  function curveLines(which, depth) {
+    const { curves, q, p3, ok } = G, [base, a] = edgeStyle(which);
+    for (const c of curves) {
+      const segs = c.closed ? c.n : c.n - 1;
+      for (let k = 0; k < segs; k++) {
+        const i = c.start + k, j = c.start + (k + 1) % c.n;
+        if (!ok[i] || !ok[j]) continue;
+        if (which) pushLine(1, p3, i * 3, p3, j * 3, base[0], base[1], base[2], a);
+        else if (depth) { depthColor(q[i * 4 + 3], vcol, 0); depthColor(q[j * 4 + 3], vcol, 3); pushLine(0, p3, i * 3, p3, j * 3, vcol[0], vcol[1], vcol[2], 0.95, vcol[3], vcol[4], vcol[5]); }
+        else pushLine(0, p3, i * 3, p3, j * 3, c.col[0], c.col[1], c.col[2], 0.95);
+      }
+    }
+  }
+
+  let runIdx = new Int32Array(1024);
+  function buildProjection() {
+    const { tris, triCol, q, p3, ok, curves } = G;
+    const depth = state.col === 'depth', trans = state.surf === 'trans', alpha = trans ? state.opacity : 1;
+    if (state.surf !== 'wire') {
+      for (let t = 0; t < tris.length; t += 3) {
+        const a = tris[t], b = tris[t + 1], c = tris[t + 2];
+        if (!ok[a] || !ok[b] || !ok[c]) continue;
+        setV(0, p3, a * 3); setV(1, p3, b * 3); setV(2, p3, c * 3);
+        if (!flatNormal()) continue;
+        if (depth) { depthColor(q[a * 4 + 3], TC, 0); depthColor(q[b * 4 + 3], TC, 3); depthColor(q[c * 4 + 3], TC, 6); }
+        else colAll(triCol[t], triCol[t + 1], triCol[t + 2]);
+        commit(alpha);
+      }
+    }
+    if (state.edges || state.surf === 'wire') edgeLines(0, depth);
+    if (!curves.length) return;
+    if (state.surf === 'wire') { curveLines(0, depth); return; }
+    const ta = trans ? Math.min(1, 0.35 + state.opacity * 2) : 1;
+    for (const c of curves) {
+      // split into runs of drawable points (stereographic projection can send points to infinity)
+      if (runIdx.length < c.n) runIdx = new Int32Array(c.n * 2);
+      let first = -1;
+      for (let k = 0; k < c.n; k++) if (!ok[c.start + k]) { first = k; break; }
+      const colFn = depth ? (i, out, o) => depthColor(q[runIdx[i] * 4 + 3], out, o) : (i, out, o) => { out[o] = c.col[0]; out[o + 1] = c.col[1]; out[o + 2] = c.col[2]; };
+      if (first < 0) { for (let k = 0; k < c.n; k++) runIdx[k] = c.start + k; tube(runIdx, c.n, c.closed, G.tubeR, colFn, ta); continue; }
+      let m = 0;
+      for (let s = 1; s <= c.n; s++) {
+        const k = c.closed ? (first + s) % c.n : s - 1, idx = c.start + k;
+        if (ok[idx]) runIdx[m++] = idx;
+        if (!ok[idx] || s === c.n) { if (m > 1) tube(runIdx, m, false, G.tubeR, colFn, ta); m = 0; }
+      }
+    }
+  }
+
+  // slice: cut tetrahedra into triangles, triangles into segments, curves into points
+  const PAIRS = [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]];
+  const ix = new Float64Array(12);
+  function cross(i, j, s, k) {
+    const q = G.q, wi = q[i * 4 + 3], wj = q[j * 4 + 3], t = (s - wi) / (wj - wi);
+    ix[k * 3] = q[i * 4] + (q[j * 4] - q[i * 4]) * t;
+    ix[k * 3 + 1] = q[i * 4 + 1] + (q[j * 4 + 1] - q[i * 4 + 1]) * t;
+    ix[k * 3 + 2] = q[i * 4 + 2] + (q[j * 4 + 2] - q[i * 4 + 2]) * t;
+  }
+  const sliceCol = new Float64Array(3);
+  function buildSlice() {
+    const { tets, tetCol, tetCtr, tris, triCol, q, curves } = G, s = state.slice;
+    const depth = state.col === 'depth', trans = state.surf === 'trans', wire = state.surf === 'wire';
+    const alpha = trans ? Math.min(1, state.opacity * 1.6) : 1;
+    depthColor(s, sliceCol, 0);
+    const v = [0, 0, 0, 0], above = [false, false, false, false], A = [0, 0], B = [0, 0];
+    if (!wire) {
+      for (let t = 0; t < tets.length / 4; t++) {
+        let na = 0;
+        for (let k = 0; k < 4; k++) { v[k] = tets[t * 4 + k]; above[k] = q[v[k] * 4 + 3] > s; if (above[k]) na++; }
+        if (na === 0 || na === 4) continue;
+        let r, g, b;
+        if (depth) { const c = tetCtr[t]; if (c >= 0) { depthColor(q[c * 4 + 3], vcol, 0); r = vcol[0]; g = vcol[1]; b = vcol[2]; } else { r = sliceCol[0]; g = sliceCol[1]; b = sliceCol[2]; } }
+        else { r = tetCol[t * 3]; g = tetCol[t * 3 + 1]; b = tetCol[t * 3 + 2]; }
+        if (na === 1 || na === 3) {
+          let n = 0;
+          for (const [i, j] of PAIRS) if (above[i] !== above[j]) cross(v[i], v[j], s, n++);
+          setV(0, ix, 0); setV(1, ix, 3); setV(2, ix, 6);
+          if (flatNormal()) { colAll(r, g, b); commit(alpha); }
+        } else {
+          let na2 = 0, nb2 = 0;
+          for (let k = 0; k < 4; k++) if (above[k]) A[na2++] = v[k]; else B[nb2++] = v[k];
+          cross(A[0], B[0], s, 0); cross(A[0], B[1], s, 1); cross(A[1], B[1], s, 2); cross(A[1], B[0], s, 3);
+          setV(0, ix, 0); setV(1, ix, 3); setV(2, ix, 6);
+          if (flatNormal()) { colAll(r, g, b); commit(alpha); }
+          setV(0, ix, 0); setV(1, ix, 6); setV(2, ix, 9);
+          if (flatNormal()) { colAll(r, g, b); commit(alpha); }
+        }
+      }
+    }
+    // surface triangles: their cut is a curve. Pure surfaces draw it as a tube; solids draw it as an outline.
+    const asTube = G.sliceTube > 0 && !wire;
+    if (asTube || state.edges || wire || G.sliceTube > 0) {
+      const [base, a] = edgeStyle(0);
+      const up = [false, false, false], f = [0, 0, 0];
+      for (let t = 0; t < tris.length; t += 3) {
+        f[0] = tris[t]; f[1] = tris[t + 1]; f[2] = tris[t + 2];
+        for (let k = 0; k < 3; k++) up[k] = q[f[k] * 4 + 3] > s;
+        if (up[0] === up[1] && up[1] === up[2]) continue;
+        let n = 0;
+        if (up[0] !== up[1]) cross(f[0], f[1], s, n++);
+        if (up[1] !== up[2]) cross(f[1], f[2], s, n++);
+        if (up[2] !== up[0]) cross(f[2], f[0], s, n++);
+        const cr = depth ? sliceCol[0] : triCol[t], cg = depth ? sliceCol[1] : triCol[t + 1], cb = depth ? sliceCol[2] : triCol[t + 2];
+        if (asTube) segTube(ix, 0, ix, 3, G.sliceTube, cr, cg, cb, alpha);
+        else if (G.sliceTube > 0) pushLine(0, ix, 0, ix, 3, cr, cg, cb, 0.95);
+        else pushLine(0, ix, 0, ix, 3, base[0], base[1], base[2], state.surf === 'solid' ? 0.6 : wire ? 0.85 : 0.45);
+      }
+    }
+    // curves pierce the hyperplane at points
+    for (const c of curves) {
+      const segs = c.closed ? c.n : c.n - 1;
+      for (let k = 0; k < segs; k++) {
+        const i = c.start + k, j = c.start + (k + 1) % c.n;
+        if ((q[i * 4 + 3] > s) === (q[j * 4 + 3] > s)) continue;
+        cross(i, j, s, 0);
+        const col = depth ? sliceCol : c.col;
+        sphere(ix[0], ix[1], ix[2], G.tubeR * 2, col[0], col[1], col[2], 1);
+      }
+    }
+    if (state.ghost) { edgeLines(1, false); curveLines(1, false); }
+  }
+
+  // ---------- frame ----------
+  let last = performance.now(), sweepPhase = 0, frameCount = 0, statT = 0;
+  let order = new Uint32Array(0);
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (state.playing) {
+      PLANES.forEach(([, i, j], k) => { if (state.spin[k]) rotBody(R, i, j, state.spin[k] * dt); });
+      if (++frameCount % 120 === 0) orthonormalize(R);
+      const o = cur();
+      if (o.kind === 'hopf' && params(o).flow) { hopfTime += dt; dirty = true; }
+    }
+    if (dirty) { dirty = false; rebuild(); }
+    if (state.mode === 'slice' && state.sweep && state.playing) {
+      sweepPhase += dt * state.sweepSp * 2;
+      state.slice = 0.999 * Math.sin(sweepPhase);
+      $('slice').value = state.slice; $('sliceO').value = state.slice.toFixed(3);
+    }
+    if (state.mode === 'slice') $('wread').textContent = `w = ${state.slice >= 0 ? '+' : '−'}${Math.abs(state.slice).toFixed(3)}`;
+
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    const W = Math.round(canvas.clientWidth * dpr), H = Math.round(canvas.clientHeight * dpr);
+    if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+    gl.viewport(0, 0, W, H);
+    const c = theme.canvas; gl.clearColor(c[0], c[1], c[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    const view = viewMat(), asp = W / Math.max(1, H), fov = 0.62;
+    const proj = state.p3 === 'persp' ? matPersp(fov, asp, 0.05, 80) : matOrtho(state.dist * Math.tan(fov / 2), asp, -40, 80);
+
+    nTri = 0; nLine = 0; nGhost = 0;
+    transform();
+    if (state.mode === 'proj') buildProjection(); else buildSlice();
+
+    if (nTri) {
+      const trans = state.surf === 'trans';
+      let data = triRaw;
+      if (trans) {
+        if (order.length < nTri) order = new Uint32Array(Math.ceil(nTri * 1.5));
+        const idx = order.subarray(0, nTri);
+        for (let i = 0; i < nTri; i++) idx[i] = i;
+        idx.sort((a, b) => triKey[a] - triKey[b]); // farthest first
+        for (let i = 0; i < nTri; i++) triOut.set(triRaw.subarray(idx[i] * 30, idx[i] * 30 + 30), i * 30);
+        data = triOut;
+      }
+      gl.useProgram(triProg);
+      gl.uniformMatrix4fv(U.tri.uProj, false, proj);
+      gl.uniformMatrix4fv(U.tri.uView, false, view);
+      gl.uniform1f(U.tri.uOrtho, state.p3 === 'ortho' ? 1 : 0);
+      gl.bindVertexArray(triVAO.vao); upload(triVAO, data, nTri * 30);
+      gl.enable(gl.DEPTH_TEST); gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1, 1);
+      if (trans) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false); }
+      else { gl.disable(gl.BLEND); gl.depthMask(true); }
+      gl.drawArrays(gl.TRIANGLES, 0, nTri * 3);
+      gl.disable(gl.POLYGON_OFFSET_FILL); gl.depthMask(true);
+    }
+    gl.useProgram(lineProg);
+    gl.uniformMatrix4fv(U.line.uProj, false, proj);
+    gl.uniformMatrix4fv(U.line.uView, false, view);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    if (nLine) {
+      gl.bindVertexArray(lineVAO.vao); upload(lineVAO, lineBuf, nLine * 14);
+      if (state.surf === 'solid') gl.enable(gl.DEPTH_TEST); else gl.disable(gl.DEPTH_TEST);
+      gl.depthMask(false); gl.drawArrays(gl.LINES, 0, nLine * 2); gl.depthMask(true);
+    }
+    if (nGhost) {
+      gl.disable(gl.DEPTH_TEST);
+      gl.bindVertexArray(ghostVAO.vao); upload(ghostVAO, ghostBuf, nGhost * 14);
+      gl.drawArrays(gl.LINES, 0, nGhost * 2);
+    }
+    gl.bindVertexArray(null);
+    if (now - statT > 250) { statT = now; $('stats').textContent = `${nTri.toLocaleString()} triangles · ${(nLine + nGhost).toLocaleString()} lines`; }
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- pointer ----------
+  const pointers = new Map(); let pinch0 = 0, dist0 = 0;
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  canvas.addEventListener('pointerdown', e => {
+    canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, four: e.shiftKey || e.button === 2 });
+    if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); dist0 = state.dist; }
+  });
+  canvas.addEventListener('pointermove', e => {
+    const p = pointers.get(e.pointerId); if (!p) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+    if (pointers.size === 2) { const [a, b] = [...pointers.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); if (pinch0) state.dist = Math.max(1.2, Math.min(16, dist0 * pinch0 / d)); return; }
+    if (p.four || e.shiftKey) { rotWorld(R, 0, 3, dx * 0.008); rotWorld(R, 1, 3, -dy * 0.008); }
+    else { state.yaw += dx * 0.008; state.pitch = Math.max(-1.5, Math.min(1.5, state.pitch + dy * 0.008)); }
+  });
+  const up = e => { pointers.delete(e.pointerId); pinch0 = 0; };
+  canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
+  canvas.addEventListener('wheel', e => { e.preventDefault(); state.dist = Math.max(1.2, Math.min(16, state.dist * Math.exp(e.deltaY * 0.0012))); }, { passive: false });
+
+  // deep links: #clifford, #hopf, #sierpinski-5, #small-stellated … and #sliced
+  const tags = location.hash.slice(1).split('.').filter(Boolean);
+  for (const t of tags) {
+    if (t === 'sliced') { state.mode = 'slice'; state.slice = 0.35; continue; }
+    const o = OBJECTS.find(o => o.key === t || o.key === 'poly:' + t || o.key === 'frac:' + t);
+    if (o) state.key = o.key;
+  }
+  const startKey = state.key; state.key = 'poly:small-stellated';
+  R = initialPose();
+  select(startKey);
+  requestAnimationFrame(frame);
+})();
