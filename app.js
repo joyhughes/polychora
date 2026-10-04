@@ -52,7 +52,7 @@
   const state = {
     key: 'poly:small-stellated', mode: 'proj', surf: 'solid', col: 'depth', p4: 'persp', p3: 'persp',
     edges: true, ghost: true, opacity: 0.18, eye4: 2.6, slice: 0, sweep: false, sweepSp: 0.25,
-    spin: [0, 0, 0.12, 0.3, 0, 0.18], playing: true,
+    spin: [0, 0, 0.12, 0.3, 0, 0.18], playing: true, pivot: [0, 0, 0, 0],
     yaw: 0.5, pitch: -0.35, dist: 3.7,
   };
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) state.playing = false;
@@ -70,6 +70,13 @@
     r.innerHTML = `<label for="sp${i}">${nm}</label><input type="range" id="sp${i}" min="-1.2" max="1.2" step="0.01"><output id="sp${i}O"></output>`;
     $('spins').appendChild(r);
     r.querySelector('input').addEventListener('input', e => { state.spin[i] = +e.target.value; syncUI(); });
+  });
+
+  ['X', 'Y', 'Z', 'W'].forEach((nm, i) => {
+    const r = document.createElement('div'); r.className = 'row';
+    r.innerHTML = `<label for="pv${i}">${nm}</label><input type="range" id="pv${i}" min="-1.5" max="1.5" step="0.01"><output id="pv${i}O"></output>`;
+    $('pivots').appendChild(r);
+    r.querySelector('input').addEventListener('input', e => { state.pivot[i] = +e.target.value; syncUI(); });
   });
 
   const fmtVal = (d, v) => (d.fmt ? (+v).toFixed(d.fmt) : String(v)) + (d.unit || '');
@@ -108,6 +115,7 @@
     $('slice').value = state.slice; $('sliceO').value = state.slice.toFixed(3);
     $('sweepSp').value = state.sweepSp; $('sweepSpO').value = state.sweepSp.toFixed(2);
     PLANES.forEach((_, i) => { $('sp' + i).value = state.spin[i]; $('sp' + i + 'O').value = state.spin[i].toFixed(2); });
+    state.pivot.forEach((v, i) => { $('pv' + i).value = v; $('pv' + i + 'O').value = v.toFixed(2); });
     const slice = state.mode === 'slice';
     $('sliceSec').hidden = !slice; $('projSec').hidden = slice; $('ghostL').hidden = !slice;
     $('eyeRow').hidden = state.p4 !== 'persp'; $('stereoHint').hidden = state.p4 !== 'stereo';
@@ -129,7 +137,19 @@
   $('prev').onclick = () => step(-1); $('next').onclick = () => step(1);
   $('play').onclick = () => { state.playing = !state.playing; syncUI(); };
   $('stopSpin').onclick = () => { state.spin = [0, 0, 0, 0, 0, 0]; syncUI(); };
-  $('reset').onclick = () => { R = initialPose(); };
+  $('reset').onclick = () => { R = initialPose(); T = [0, 0, 0, 0]; };
+  const setPivot = c => { state.pivot = c.map(x => Math.round(x * 100) / 100); syncUI(); };
+  $('pivotCentre').onclick = () => setPivot([0, 0, 0, 0]);
+  $('pivotVertex').onclick = () => {
+    // a random outermost point of the object: a vertex for the polytopes and fractals
+    const { pts, npts } = G; let m = 0;
+    for (let i = 0; i < npts; i++) m = Math.max(m, Math.hypot(pts[i * 4], pts[i * 4 + 1], pts[i * 4 + 2], pts[i * 4 + 3]));
+    const far = []; for (let i = 0; i < npts; i++) if (Math.hypot(pts[i * 4], pts[i * 4 + 1], pts[i * 4 + 2], pts[i * 4 + 3]) > m * 0.995) far.push(i);
+    const i = far[Math.floor(Math.random() * far.length)];
+    setPivot([0, 1, 2, 3].map(k => pts[i * 4 + k]));
+  };
+  $('pivotRandom').onclick = () => setPivot([0, 1, 2, 3].map(() => (Math.random() * 2 - 1) * 1.1));
+  $('recentre').onclick = () => { T = [0, 0, 0, 0]; };
   const preset = s => () => { state.spin = s; state.playing = true; syncUI(); };
   $('presetSimple').onclick = preset([0, 0, 0, 0.4, 0, 0]);
   $('presetDouble').onclick = preset([0, 0, 0.12, 0.3, 0, 0.18]);
@@ -170,7 +190,14 @@
     if (cur().s3) { rotWorld(M, 1, 2, 0.5); return M; } // keep the torus axes readable in stereographic view
     rotWorld(M, 0, 3, 0.31); rotWorld(M, 1, 2, 0.23); rotWorld(M, 2, 3, 0.17); rotWorld(M, 0, 1, 0.11); return M;
   }
-  let R = ident4();
+  let R = ident4(), T = [0, 0, 0, 0];
+  // The pose is affine: q = R·x + T. Every rotation turns about the pivot (given in object coordinates),
+  // so the pivot's world position R·c + T stays put and the rest of the object swings around it.
+  const pivotWorld = () => { const c = state.pivot; return [0, 1, 2, 3].map(r => R[r * 4] * c[0] + R[r * 4 + 1] * c[1] + R[r * 4 + 2] * c[2] + R[r * 4 + 3] * c[3] + T[r]); };
+  function aboutPivot(fn) {
+    const pw = pivotWorld(); fn(); const c = state.pivot;
+    for (let r = 0; r < 4; r++) T[r] = pw[r] - (R[r * 4] * c[0] + R[r * 4 + 1] * c[1] + R[r * 4 + 2] * c[2] + R[r * 4 + 3] * c[3]);
+  }
 
   // ---------- colours ----------
   const DEPTH_STOPS = [[0x3d, 0x4e, 0xd6], [0x1f, 0xb5, 0xb0], [0xf2, 0xc1, 0x4e], [0xee, 0x5d, 0x4a]].map(c => c.map(x => x / 255));
@@ -183,7 +210,7 @@
   let theme = {};
   function readTheme() {
     const cs = getComputedStyle(document.documentElement);
-    theme = { canvas: hex(cs.getPropertyValue('--canvas')), fg: hex(cs.getPropertyValue('--fg')) };
+    theme = { canvas: hex(cs.getPropertyValue('--canvas')), fg: hex(cs.getPropertyValue('--fg')), accent: hex(cs.getPropertyValue('--accent')) };
     theme.dark = theme.canvas[0] + theme.canvas[1] + theme.canvas[2] < 1.5;
   }
   readTheme();
@@ -200,7 +227,7 @@
       if (o.s3) { state.p4 = 'stereo'; state.dist = 7.5; }
       else { if (state.p4 === 'stereo') state.p4 = 'persp'; state.dist = 3.7; }
       if (o.kind === 'hopf') state.col = 'flat'; // fibres coloured by their point on S²
-      R = initialPose();
+      R = initialPose(); T = [0, 0, 0, 0];
     }
     buildParamUI(); dirty = true; syncUI();
   }
@@ -398,18 +425,38 @@
   // ---------- per-frame geometry ----------
   const STEREO_K = 0.5, LIMIT = 9;
   function transform() {
-    const { pts, npts, q, p3, ok } = G, M = R;
+    const { pts, npts, q, p3, ok } = G, M = R, [t0, t1, t2, t3] = T;
     const mode = state.mode === 'slice' ? 'ortho' : state.p4, D = state.eye4;
     for (let i = 0; i < npts; i++) {
       const o = i * 4, x = pts[o], y = pts[o + 1], z = pts[o + 2], w = pts[o + 3];
       for (let r = 0; r < 4; r++) q[o + r] = M[r * 4] * x + M[r * 4 + 1] * y + M[r * 4 + 2] * z + M[r * 4 + 3] * w;
-      const qw = q[o + 3];
-      let s = 1, good = 1;
-      if (mode === 'persp') s = (D - 1) / (D - qw);
-      else if (mode === 'stereo') { const den = 1 - qw; if (den < 1e-3) { good = 0; s = 0; } else s = STEREO_K / den; }
-      const X = q[o] * s, Y = q[o + 1] * s, Z = q[o + 2] * s;
-      if (good && X * X + Y * Y + Z * Z > LIMIT * LIMIT) good = 0;
-      p3[i * 3] = X; p3[i * 3 + 1] = Y; p3[i * 3 + 2] = Z; ok[i] = good;
+      q[o] += t0; q[o + 1] += t1; q[o + 2] += t2; q[o + 3] += t3;
+      ok[i] = project(q, o, p3, i * 3, mode, D);
+    }
+  }
+  function project(q, o, out, j, mode, D) {
+    const qw = q[o + 3];
+    let s = 1, good = 1;
+    if (mode === 'persp') { const den = D - qw; if (den < 1e-3) { good = 0; s = 0; } else s = (D - 1) / den; }
+    else if (mode === 'stereo') { const den = 1 - qw; if (den < 1e-3) { good = 0; s = 0; } else s = STEREO_K / den; }
+    const X = q[o] * s, Y = q[o + 1] * s, Z = q[o + 2] * s;
+    if (good && X * X + Y * Y + Z * Z > LIMIT * LIMIT) good = 0;
+    out[j] = X; out[j + 1] = Y; out[j + 2] = Z;
+    return good;
+  }
+  // a small crosshair at the pivot, drawn over everything
+  const pvP = new Float64Array(9);
+  function pivotMarker() {
+    const c = state.pivot;
+    if (!c[0] && !c[1] && !c[2] && !c[3]) return;
+    const pw = pivotWorld(), mode = state.mode === 'slice' ? 'ortho' : state.p4;
+    if (!project(pw, 0, pvP, 0, mode, state.eye4)) return;
+    const a = theme.accent, h = 0.07 * state.dist / 3.7;
+    // in slice view the pivot fades as it leaves the hyperplane
+    const al = state.mode === 'slice' ? 0.25 + 0.75 * Math.max(0, 1 - Math.abs(pw[3] - state.slice) / 0.4) : 1;
+    for (let k = 0; k < 3; k++) {
+      pvP.copyWithin(3, 0, 3); pvP.copyWithin(6, 0, 3); pvP[3 + k] -= h; pvP[6 + k] += h;
+      pushLine(1, pvP, 3, pvP, 6, a[0], a[1], a[2], al);
     }
   }
 
@@ -559,8 +606,10 @@
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
     if (state.playing) {
-      PLANES.forEach(([, i, j], k) => { if (state.spin[k]) rotBody(R, i, j, state.spin[k] * dt); });
-      if (++frameCount % 120 === 0) orthonormalize(R);
+      aboutPivot(() => {
+        PLANES.forEach(([, i, j], k) => { if (state.spin[k]) rotBody(R, i, j, state.spin[k] * dt); });
+        if (++frameCount % 120 === 0) orthonormalize(R);
+      });
       const o = cur();
       if (o.kind === 'hopf' && params(o).flow) { hopfTime += dt; dirty = true; }
     }
@@ -584,6 +633,7 @@
     nTri = 0; nLine = 0; nGhost = 0;
     transform();
     if (state.mode === 'proj') buildProjection(); else buildSlice();
+    pivotMarker();
 
     if (nTri) {
       const trans = state.surf === 'trans';
@@ -638,15 +688,18 @@
     const p = pointers.get(e.pointerId); if (!p) return;
     const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
     if (pointers.size === 2) { const [a, b] = [...pointers.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); if (pinch0) state.dist = Math.max(1.2, Math.min(16, dist0 * pinch0 / d)); return; }
-    if (p.four || e.shiftKey) { rotWorld(R, 0, 3, dx * 0.008); rotWorld(R, 1, 3, -dy * 0.008); }
+    if (p.four || e.shiftKey) aboutPivot(() => { rotWorld(R, 0, 3, dx * 0.008); rotWorld(R, 1, 3, -dy * 0.008); });
     else { state.yaw += dx * 0.008; state.pitch = Math.max(-1.5, Math.min(1.5, state.pitch + dy * 0.008)); }
   });
   const up = e => { pointers.delete(e.pointerId); pinch0 = 0; };
   canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
   canvas.addEventListener('wheel', e => { e.preventDefault(); state.dist = Math.max(1.2, Math.min(16, state.dist * Math.exp(e.deltaY * 0.0012))); }, { passive: false });
 
-  // deep links: #clifford, #hopf, #sierpinski-5, #small-stellated … and #sliced
-  const tags = location.hash.slice(1).split('.').filter(Boolean);
+  // deep links: #clifford, #hopf, #sierpinski-5, #small-stellated … plus #sliced and #pivot=x,y,z,w
+  let hash = location.hash.slice(1);
+  const pv = /pivot=([-+\d.e]+(?:,[-+\d.e]+){3})/.exec(hash);
+  if (pv) { const c = pv[1].split(',').map(Number); if (c.every(isFinite)) state.pivot = c; hash = hash.replace(pv[0], ''); }
+  const tags = hash.split('.').filter(Boolean);
   for (const t of tags) {
     if (t === 'sliced') { state.mode = 'slice'; state.slice = 0.35; continue; }
     const o = OBJECTS.find(o => o.key === t || o.key === 'poly:' + t || o.key === 'frac:' + t);

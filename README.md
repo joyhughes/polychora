@@ -13,13 +13,14 @@ Interactive WebGL2 viewer for 4D objects:
 
 - Projection (4D → 3D: perspective, orthographic or stereographic) or hyperplane slicing at any w, with an automatic sweep
 - 4D spin in all six rotation planes, with simple, double and isoclinic presets; Shift-drag rotates in 4D by hand
+- Off-centre rotation: set the centre of rotation anywhere in 4D (or snap it to a vertex), and the object swings around it, through the slice and toward or away from the 4D eye
 - Solid, translucent (depth-sorted) or wireframe surfaces
 - Flat colours (by Hopf fibre) or colours by 4D depth (kata −w → ana +w)
 - Perspective or orthographic 3D camera
 
 Spins act in the object's own frame, so the Isoclinic preset (equal XY and ZW) slides every point along its Hopf fibre.
 
-Deep links: `#clifford`, `#hopf`, `#menger`, `#sierpinski-5`, `#great-grand` …, add `.sliced` to open in slice view.
+Deep links: `#clifford`, `#hopf`, `#menger`, `#sierpinski-5`, `#great-grand` …, add `.sliced` to open in slice view and `.pivot=x,y,z,w` to set the centre of rotation (e.g. `#tesseract.sliced.pivot=0.5,0.5,0.5,0.5`).
 
 Keys: Space pause, `[` `]` change polytope, `S` toggle slice.
 
