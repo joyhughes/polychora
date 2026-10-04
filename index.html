@@ -55,7 +55,9 @@
 
   section { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; }
   .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
-  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg { position: relative; }
+  /* keep the hidden radios inside the control, so focusing one never scrolls the page */
+  .seg input { position: absolute; top: 0; left: 0; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
   .seg label { text-align: center; padding: 6px 4px; cursor: pointer; font-size: 13px; color: var(--muted); background: var(--chip); }
   .seg label + input + label, .seg input + label ~ label { border-left: 1px solid var(--line); }
   .seg input:checked + label { background: var(--fg); color: var(--panel); }
