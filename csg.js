@@ -294,8 +294,11 @@
   // opt.depth: how many times one simplex may be split while resolving the cut
   // Shapes are combined one at a time, so the running result (with its own cut edges and faces) is what the
   // next shape is clipped against: every corner where boundaries meet is then an actual edge of a mesh.
+  // opt.deadline: a Date.now() time after which compose gives up by throwing CSG.TIMEOUT
   function compose(items, opt = {}) {
-    const n = items.length, maxDepth = opt.depth ?? 10;
+    const n = items.length, maxDepth = opt.depth ?? 10, deadline = opt.deadline ?? Infinity;
+    let ticks = 0;
+    const tick = () => { if ((++ticks & 255) === 0 && Date.now() > deadline) throw TIMEOUT; };
     const P = items.map(it => placement(it.place));
     const LP = new Float64Array(5);
     // world-space fields; with W given, also the active hyperplane in world space (N·p = C)
@@ -482,6 +485,7 @@
 
       // decide what to do with a simplex: 'all' | 'none' | 'mid' (halve it) | 'cut' (march) | a hyperplane to split by
       const classify = (vs, depth) => {
+        tick();
         let nin = 0, nout = 0, minAbs = Infinity, maxL = 0;
         for (const v of vs) { const x = val(v); if (x < -EPS) nin++; else if (x > EPS) nout++; minAbs = Math.min(minAbs, Math.abs(x)); }
         if (!nin || !nout) {
@@ -679,6 +683,7 @@
     return o;
   }
 
-  root.CSG = { field, compose, placement, TINTS };
+  const TIMEOUT = new Error('csg timeout');
+  root.CSG = { field, compose, placement, TINTS, TIMEOUT };
   if (typeof module !== 'undefined') module.exports = root.CSG;
 })(typeof window !== 'undefined' ? window : globalThis);

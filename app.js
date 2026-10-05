@@ -376,20 +376,34 @@
   }
   const descs = () => scene.shapes.map(sh => { const o = objOf(sh.key); return { id: sh.id, key: sh.key, kind: o.kind, oid: o.id, prm: shapePrm(sh, o), place: sh.place, op: sh.op, tint: sh.tint, visible: sh.visible }; });
   // Shapes are built and combined in a worker when the browser allows it, else right here.
-  let worker = null, inFlight = 0, jobSeq = 0, buildStart = 0;
-  try {
-    worker = new Worker('worker.js');
-    worker.onmessage = e => {
-      const r = e.data; inFlight = 0;
-      if (r.error) { console.error(r.error); worker = null; dirty = true; return; }
-      applyBuild(r);
-    };
-    worker.onerror = e => { e.preventDefault(); worker = null; inFlight = 0; dirty = true; };
-  } catch { worker = null; }
+  // A heavy combination arrives as a coarse draft and then the full result; while it refines, a change to the
+  // scene restarts the worker rather than waiting.
+  let worker = null, inFlight = 0, refining = 0, jobSeq = 0, buildStart = 0;
+  function startWorker() {
+    try {
+      worker = new Worker('worker.js');
+      worker.onmessage = e => {
+        const r = e.data;
+        if (r.job !== inFlight && r.job !== refining) return;
+        if (r.error) { console.error(r.error); worker = null; inFlight = refining = 0; dirty = true; return; }
+        applyBuild(r);
+        if (r.final) inFlight = refining = 0; else { refining = r.job; inFlight = 0; }
+      };
+      worker.onerror = e => { e.preventDefault(); worker = null; inFlight = refining = 0; dirty = true; };
+    } catch { worker = null; }
+  }
+  startWorker();
   function rebuild() {
     const d = descs();
+    if (refining && worker) { worker.terminate(); refining = 0; startWorker(); }
     if (worker) { inFlight = ++jobSeq; buildStart = performance.now(); worker.postMessage({ job: inFlight, descs: d, hopfTime }); }
-    else applyBuild(window.Scene.build(d, hopfTime));
+    else {
+      // no worker: full precision if it is quick, else the coarse draft only
+      let r;
+      try { r = window.Scene.build(d, hopfTime, { deadline: Date.now() + 1200 }); }
+      catch (err) { if (err !== window.CSG.TIMEOUT) throw err; r = window.Scene.build(d, hopfTime, { depth: 3 }); }
+      applyBuild(r);
+    }
   }
   function applyBuild(r) {
     const m = r.G;
@@ -843,7 +857,7 @@
     gl.bindVertexArray(null);
     if (now - statT > 250) {
       statT = now;
-      const busy = inFlight && now - buildStart > 300 ? 'combining shapes… · ' : '';
+      const busy = refining ? 'refining the cut… · ' : inFlight && now - buildStart > 300 ? 'combining shapes… · ' : '';
       $('stats').textContent = `${busy}${nTri.toLocaleString()} triangles · ${(nLine + nGhost).toLocaleString()} lines`;
     }
     if (shooting) { shotScale = 0; finishSnapshot(); }

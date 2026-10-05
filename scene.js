@@ -12,7 +12,8 @@
   }
 
   // descs: [{ id, key, kind, oid, prm, place, op, tint, visible }] top to bottom
-  function build(descs, hopfTime = 0) {
+  // opt: { depth, deadline } passed to CSG.compose
+  function build(descs, hopfTime = 0, opt = {}) {
     const items = [], infos = [], live = new Set();
     for (const d of descs) {
       live.add(d.id);
@@ -25,7 +26,7 @@
     }
     for (const k of [...cache.keys()]) if (!live.has(k)) cache.delete(k);
     const t0 = Date.now();
-    const G = CSG.compose(items.length ? items : [], {});
+    const G = CSG.compose(items, opt);
     return { G, infos, ms: Date.now() - t0 };
   }
 
