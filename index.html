@@ -46,6 +46,12 @@
   .card { display: flex; flex-direction: column; gap: 10px; }
   .name { font: 500 20px/1.15 var(--display); margin: 0; text-wrap: balance; }
   .sym { font: 500 15px var(--mono); color: var(--accent); }
+  .symrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 18px; }
+  .busy { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .busy i { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(1turn); } }
+  @media (prefers-reduced-motion: reduce) { .busy i { animation-duration: 2.4s; } }
+  .card.stale .counts, .card.stale dl { opacity: .35; transition: opacity .2s; }
   .counts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; font-variant-numeric: tabular-nums; }
   .counts div { display: flex; flex-direction: column; }
   .counts b { font: 500 15px var(--mono); }
@@ -131,7 +137,7 @@
 
     <div class="card">
       <p class="name" id="pname">—</p>
-      <div class="sym" id="psym"></div>
+      <div class="symrow"><span class="sym" id="psym"></span><span class="busy" id="pbusy" hidden><i></i><span></span></span></div>
       <div class="counts" id="counts"></div>
       <dl id="rows"></dl>
     </div>

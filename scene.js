@@ -21,7 +21,7 @@
       let c = cache.get(d.id);
       if (!c || c.sig !== sig) { c = { ...c, sig, mesh: objectMesh({ ...d, id: d.oid }, hopfTime) }; cache.set(d.id, c); }
       if (c.fsig !== fsig) { c.fsig = fsig; c.field = CSG.field({ kind: d.kind, id: d.oid }, d.prm); }
-      infos.push(c.mesh.info);
+      infos.push({ ...c.mesh.info, shape: d.id, key: d.key, sig: fsig });
       if (d.visible) items.push({ mesh: c.mesh, field: c.field, place: d.place, op: d.op, tint: d.tint });
     }
     for (const k of [...cache.keys()]) if (!live.has(k)) cache.delete(k);

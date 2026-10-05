@@ -391,7 +391,7 @@
       if (o.kind === 'hopf') state.col = 'flat'; // fibres coloured by their point on S²
       R = initialPose(); T = [0, 0, 0, 0];
     }
-    buildParamUI(); buildShapeList(); dirty = true; syncUI();
+    buildParamUI(); buildShapeList(); showInfo(); dirty = true; syncUI();
   }
   const descs = () => scene.shapes.map(sh => { const o = objOf(sh.key); return { id: sh.id, key: sh.key, kind: o.kind, oid: o.id, prm: shapePrm(sh, o), place: sh.place, op: sh.op, tint: sh.tint, visible: sh.visible }; });
   // Shapes are built and combined in a worker when the browser allows it, else right here.
@@ -431,15 +431,33 @@
     showInfo();
   }
   let lastBuildMs = 0;
+  // The panel names the selected shape at once; its counts wait for the build that includes it.
   function showInfo() {
-    const info = lastInfos[scene.sel];
-    if (!info) return;
-    const key = JSON.stringify(info);
+    const sh = selShape(), o = objOf(sh.key), got = lastInfos.find(f => f.shape === sh.id);
+    const fresh = got && got.key === sh.key, info = fresh ? got : placeholderInfo(o);
+    const card = $('pname').closest('.card');
+    card.classList.toggle('stale', !fresh || got.sig !== JSON.stringify([sh.key, shapePrm(sh, o)]));
+    const key = JSON.stringify([info.name, info.sub, info.counts, info.rows]);
     if (key === lastInfo) return;
     lastInfo = key;
     $('pname').textContent = info.name; $('psym').textContent = info.sub;
     $('counts').innerHTML = info.counts.map(([l, v]) => `<div><b>${v}</b><span>${l}</span></div>`).join('');
     $('rows').innerHTML = info.rows.map(([t, d]) => `<dt>${t}</dt><dd>${d}</dd>`).join('');
+  }
+  function placeholderInfo(o) {
+    const c = o.kind === 'poly' && P.CATALOG.find(c => c.id === o.id);
+    const labels = o.kind === 'poly' ? ['cells', 'faces', 'edges', 'verts'] : o.kind === 'frac' ? ['copies', 'cells', 'faces', 'verts'] : o.kind === 'hopf' ? ['fibres', 'rings', 'segs', 'tori'] : ['grid', 'tris', 'tets', 'curves'];
+    return { name: shortName(o), sub: c ? c.sym : '', counts: labels.map(l => [l, '…']), rows: [] };
+  }
+  // the spinner beside the symbol while a build is pending (after a short delay, so quick ones do not flicker)
+  function showBusy(now) {
+    const pending = refining || (inFlight && now - buildStart > 250);
+    const b = $('pbusy');
+    if (pending) {
+      const several = scene.shapes.filter(s => s.visible).length > 1;
+      b.lastChild.textContent = refining ? 'refining the cut…' : several ? 'computing intersection…' : 'building…';
+    }
+    b.hidden = !pending;
   }
 
   // ---------- GL ----------
@@ -898,6 +916,7 @@
     gl.bindVertexArray(null);
     if (now - statT > 250) {
       statT = now;
+      showBusy(now); showInfo();
       const busy = refining ? 'refining the cut… · ' : inFlight && now - buildStart > 300 ? 'combining shapes… · ' : '';
       $('stats').textContent = rayPx ? `ray traced on the GPU · ${rayPx.toLocaleString()} rays · ${Math.round(1000 / Math.max(1, frameMs))} fps`
         : `${busy}${nTri.toLocaleString()} triangles · ${(nLine + nGhost).toLocaleString()} lines`;
