@@ -181,12 +181,11 @@
   $('addShape').onclick = () => {
     // a tesseract cutting into the current shape is the quickest way to see what subtraction does
     const solid = scene.shapes.some(sh => ['poly', 'frac'].includes(objOf(sh.key).kind));
-    scene.shapes.push(newShape('poly:tesseract', { op: solid ? 'subtract' : 'add', tint: nextTint(), place: { off: [0.45, 0.2, 0.1, 0.25], scale: 0.7, rot: [0, 0, 0, 0, 0, 0] } }));
+    scene.shapes.push(newShape('poly:tesseract', { op: solid ? 'subtract' : 'add', tint: nextTint(), place: { off: [0, 0, 0.1, 0.25], scale: 1, rot: [0, 0, 0, 0, 0, 0] } }));
     selectShape(scene.shapes.length - 1); dirty = true;
   };
   $('dupShape').onclick = () => {
     const s0 = selShape(), sh = newShape(s0.key, { prm: structuredClone(s0.prm), tint: nextTint(), place: structuredClone(s0.place), spin: [...s0.spin] });
-    sh.place.off[0] = Math.min(1.5, sh.place.off[0] + 0.4);
     scene.shapes.splice(scene.sel + 1, 0, sh); selectShape(scene.sel + 1); dirty = true;
   };
   function refreshParamVisibility() {
