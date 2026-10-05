@@ -3,6 +3,7 @@
 Interactive WebGL2 viewer for 4D objects:
 
 - **The 16 regular polychora**: the 6 convex regular 4-polytopes and all 10 Schläfli–Hess star polychora (the regular stellations of the 120-cell and 600-cell), with adjustable cell shrink
+- **The permutohedron** (omnitruncated 5-cell): the 120 orderings of (1, 2, 3, 4, 5), with 10 truncated-octahedron and 20 hexagonal-prism cells
 - **Clifford torus** and the family of flat tori in S³: torus angle η, solid-shell thickness, mesh resolution, grid lines, and a (p, q) torus knot or link drawn on the surface
 - **Hopf fibration**: fibres over latitude rings, a Fibonacci spread over S², or one tilted great circle; ring count, latitude, spread, phase, animated flow, tube radius, and optional Hopf tori
 - **Sierpinski fractals**: pentatope, 16-cell, Cantor tesseract, Menger tesseract and Vicsek tesseract, with fractal depth and (where it applies) the scale ratio; the similarity dimension is shown live

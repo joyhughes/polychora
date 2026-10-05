@@ -144,7 +144,7 @@
   function field(o, prm) {
     if (o.kind === 'poly') {
       const T = Poly.polytope(o.id);
-      return T.spec.kind === 'convex' ? { f: convexField(planesOf(T)), lip: 1 } : { f: starField(T), lip: 3 };
+      return T.spec.kind !== 'star' ? { f: convexField(planesOf(T)), lip: 1 } : { f: starField(T), lip: 3 };
     }
     if (o.kind === 'frac') return { f: fractalField(o.id, prm), lip: 1 };
     return null;

@@ -162,7 +162,70 @@
     { id: 'great-icosahedral', name: 'Great icosahedral 120-cell', sym: '{3,5/2,5}', cell: 'great icosahedron', face: 'triangle', vf: 'small stellated dodecahedron', density: 76, set: 'V', cdir: 'V', h: C72, e: C108, p: 3, kind: 'star' },
     { id: 'grand-600', name: 'Grand 600-cell', sym: '{3,3,5/2}', cell: 'tetrahedron', face: 'triangle', vf: 'great icosahedron', density: 191, set: 'V', cdir: 'W', h: GRAND_H, e: C108, p: 3, kind: 'star' },
     { id: 'great-grand-stellated', name: 'Great grand stellated 120-cell', sym: '{5/2,3,3}', cell: 'great stellated dodecahedron', face: 'pentagram', vf: 'tetrahedron', density: 191, set: 'W', cdir: 'V', h: GRAND_H, e: GGS_E, p: 5, kind: 'star' },
+
+    { id: 'permutohedron', name: 'Permutohedron', sym: 't₀₁₂₃{3,3,3}', cell: '10 truncated octahedra, 20 hexagonal prisms', face: '90 squares, 60 hexagons', vf: 'irregular tetrahedron', density: 1, kind: 'uniform', build: permutohedron, family: 'omnitruncated 5-cell; vertices are the 120 orderings of 1–5' },
   ];
+
+  // ---- polytopes given by their facet hyperplanes (not regular, so cells sit at different heights) ----
+  // Each cell is the set of vertices maximising n·v; each face is where two cells share a 2D set of vertices,
+  // ordered around by the edge graph.
+  function fromFacets(V, normals, e) {
+    const cells = [], faces = [], faceCells = [], faceKey = new Map();
+    const layers = normals.map(n => { let m = -Infinity; for (const v of V) m = Math.max(m, dot(v, n)); return { n, h: m, S: V.map((v, i) => i).filter(i => Math.abs(dot(V[i], n) - m) < TOL) }; });
+    const adj = V.map((v, i) => V.map((w, j) => j).filter(j => j !== i && Math.abs(dot(v, V[j]) - e) < TOL));
+    layers.forEach((L, ci) => {
+      const cf = [];
+      layers.forEach((M, cj) => {
+        if (cj === ci) return;
+        const common = L.S.filter(i => M.S.includes(i));
+        if (common.length < 3 || !planar(common.map(i => V[i]))) return;
+        const key = common.slice().sort((a, b) => a - b).join(',');
+        let f = faceKey.get(key);
+        if (f === undefined) {
+          // walk the face's boundary along edges
+          const cyc = [common[0]];
+          while (cyc.length < common.length) {
+            const last = cyc[cyc.length - 1], nx = adj[last].find(j => common.includes(j) && !cyc.includes(j));
+            if (nx === undefined) break;
+            cyc.push(nx);
+          }
+          f = faces.length; faceKey.set(key, f); faces.push(cyc); faceCells.push([]);
+        }
+        faceCells[f].push(ci); cf.push(f);
+      });
+      // the foot of the perpendicular is the cell's centre for these symmetric cells
+      cells.push({ center: L.n.map(x => x * L.h), faces: cf, nverts: L.S.length });
+    });
+    const edgeKey = new Set(), edges = [];
+    for (const f of faces) for (let k = 0; k < f.length; k++) {
+      const a = f[k], b = f[(k + 1) % f.length], key = a < b ? a + ',' + b : b + ',' + a;
+      if (!edgeKey.has(key)) { edgeKey.add(key); edges.push([a, b]); }
+    }
+    return { verts: V, faces, faceCells, cells, edges, nverts: new Set(faces.flat()).size };
+  }
+
+  // 4D permutohedron (omnitruncated 5-cell): the permutations of (1, 2, 3, 4, 5), which lie in the hyperplane
+  // Σx = 15. Facets: Σ over a subset S of the coordinates ≥ 1 + … + |S|, for each of the 30 nonempty proper subsets.
+  function permutohedron() {
+    const basis = [];
+    for (let i = 0; i < 4; i++) {
+      let v = [0, 0, 0, 0, 0]; v[i] = 1; v[i + 1] = -1;
+      for (const b of basis) { const d = v.reduce((s, x, k) => s + x * b[k], 0); v = v.map((x, k) => x - d * b[k]); }
+      const l = Math.hypot(...v); basis.push(v.map(x => x / l));
+    }
+    const to4 = p => basis.map(b => b.reduce((s, x, k) => s + x * p[k], 0));
+    const perms = [];
+    const gen = (a, k) => { if (k === 5) { perms.push(a.slice()); return; } for (let i = k; i < 5; i++) { [a[k], a[i]] = [a[i], a[k]]; gen(a, k + 1); [a[k], a[i]] = [a[i], a[k]]; } };
+    gen([1, 2, 3, 4, 5], 0);
+    const R = Math.sqrt(10); // |(−2, −1, 0, 1, 2)|
+    const V = perms.map(p => to4(p.map(x => (x - 3) / R)));
+    const normals = [];
+    for (let m = 1; m < 31; m++) {
+      const S = [0, 1, 2, 3, 4].map(i => (m >> i) & 1), k = S.reduce((a, b) => a + b);
+      normals.push(norm(to4(S.map(x => k / 5 - x)))); // outward: small sums on S
+    }
+    return fromFacets(V, normals, 1 - 1 / 10);
+  }
 
   let sets = null;
   function getSets() {
@@ -189,6 +252,7 @@
   function polytope(id) {
     if (cache.has(id)) return cache.get(id);
     const spec = { ...CATALOG.find(s => s.id === id) };
+    if (spec.build) { const P = spec.build(); P.spec = spec; cache.set(id, P); return P; }
     const st = getSets(), V = st[spec.set], C = st[spec.cdir];
     if (spec.h === null) spec.h = layerValues(C[0], V)[0];
     if (spec.e === null) spec.e = layerValues(V[0], V)[0];

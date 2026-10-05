@@ -7,7 +7,7 @@
 
   // ---------- object catalogue ----------
   const OBJECTS = [];
-  for (const s of P.CATALOG) OBJECTS.push({ key: 'poly:' + s.id, label: `${s.name}  ${s.sym}`, group: s.kind === 'convex' ? 'Convex regular polychora' : 'Schläfli–Hess star polychora', kind: 'poly', id: s.id });
+  for (const s of P.CATALOG) OBJECTS.push({ key: 'poly:' + s.id, label: `${s.name}  ${s.sym}`, group: s.kind === 'convex' ? 'Convex regular polychora' : s.kind === 'star' ? 'Schläfli–Hess star polychora' : 'Other polytopes', kind: 'poly', id: s.id });
   OBJECTS.push({ key: 'clifford', label: 'Clifford torus', group: 'Surfaces & fibrations in S³', kind: 'clifford', s3: true });
   OBJECTS.push({ key: 'hopf', label: 'Hopf fibration', group: 'Surfaces & fibrations in S³', kind: 'hopf', s3: true });
   for (const [k, F] of Object.entries(O.FRACTALS)) OBJECTS.push({ key: 'frac:' + k, label: F.name, group: 'Sierpinski fractals', kind: 'frac', id: k });

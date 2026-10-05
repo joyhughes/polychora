@@ -84,7 +84,7 @@
     const rows = [['Cell', s.cell], ['Face', s.face], ['Vertex fig.', s.vf], ['Density', String(s.density)]];
     rows.push(s.kind === 'star'
       ? ['Relatives', `stellation of the ${s.cdir === 'V' ? '120' : '600'}-cell; faceting of the ${s.set === 'V' ? '600' : '120'}-cell`]
-      : ['Family', 'convex regular']);
+      : ['Family', s.family || 'convex regular']);
     return M.done({
       info: { name: s.name, sub: s.sym, counts: [['cells', T.cells.length], ['faces', T.faces.length], ['edges', T.edges.length], ['verts', T.nverts]], rows },
     });
