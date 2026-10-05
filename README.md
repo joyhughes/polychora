@@ -14,6 +14,7 @@ Interactive WebGL2 viewer for 4D objects:
 - Projection (4D → 3D: perspective, orthographic or stereographic) or hyperplane slicing at any w, with an automatic sweep
 - 4D spin in all six rotation planes, with simple, double and isoclinic presets; Shift-drag rotates in 4D by hand
 - Off-centre rotation: set the centre of rotation anywhere in 4D (or snap it to a vertex), and the object swings around it, through the slice and toward or away from the 4D eye
+- Capture: save PNG snapshots (screen size, 2× or 4×) and record the canvas as MP4 or WebM video (`P` and `R` keys)
 - Solid, translucent (depth-sorted) or wireframe surfaces
 - Flat colours (by Hopf fibre) or colours by 4D depth (kata −w → ana +w)
 - Perspective or orthographic 3D camera

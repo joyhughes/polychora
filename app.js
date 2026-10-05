@@ -2,7 +2,7 @@
   const $ = id => document.getElementById(id);
   const P = window.Polychora, O = window.Objects;
   const canvas = $('gl');
-  const gl = canvas.getContext('webgl2', { antialias: true, premultipliedAlpha: false });
+  const gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
   if (!gl) { $('err').hidden = false; $('err').textContent = 'This viewer needs WebGL2, which this browser has turned off or does not support.'; return; }
 
   // ---------- object catalogue ----------
@@ -52,7 +52,7 @@
   const state = {
     key: 'poly:small-stellated', mode: 'proj', surf: 'solid', col: 'depth', p4: 'persp', p3: 'persp',
     edges: true, ghost: true, opacity: 0.18, eye4: 2.6, slice: 0, sweep: false, sweepSp: 0.25,
-    spin: [0, 0, 0.12, 0.3, 0, 0.18], playing: true, pivot: [0, 0, 0, 0],
+    spin: [0, 0, 0.12, 0.3, 0, 0.18], playing: true, pivot: [0, 0, 0, 0], marker: true,
     yaw: 0.5, pitch: -0.35, dist: 3.7,
   };
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) state.playing = false;
@@ -149,6 +149,7 @@
     setPivot([0, 1, 2, 3].map(k => pts[i * 4 + k]));
   };
   $('pivotRandom').onclick = () => setPivot([0, 1, 2, 3].map(() => (Math.random() * 2 - 1) * 1.1));
+  $('marker').addEventListener('change', e => { state.marker = e.target.checked; });
   $('recentre').onclick = () => { T = [0, 0, 0, 0]; };
   const preset = s => () => { state.spin = s; state.playing = true; syncUI(); };
   $('presetSimple').onclick = preset([0, 0, 0, 0.4, 0, 0]);
@@ -161,7 +162,61 @@
     else if (e.key === '[') step(-1);
     else if (e.key === ']') step(1);
     else if (e.key === 's' || e.key === 'S') { state.mode = state.mode === 'slice' ? 'proj' : 'slice'; syncUI(); }
+    else if (e.key === 'p' || e.key === 'P') snapshot();
+    else if (e.key === 'r' || e.key === 'R') toggleRecording();
   });
+
+  // ---------- capture ----------
+  // Files go through the viewer's downloads capability when framed on claude.ai, else a plain link download.
+  const downloadsCap = window.claude?.use ? window.claude.use('downloads').catch(() => null) : Promise.resolve(null);
+  const stamp = () => { const d = new Date(), z = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}`; };
+  const baseName = () => 'polychora-' + state.key.replace(/^(poly|frac):/, '');
+  let noteTimer = 0;
+  function note(msg) { const n = $('capNote'); n.textContent = msg; n.hidden = !msg; clearTimeout(noteTimer); if (msg) noteTimer = setTimeout(() => { n.hidden = true; }, 4000); }
+  async function saveFile(blob, filename) {
+    const dl = await downloadsCap;
+    if (dl) {
+      try { await dl.save({ filename, data: blob }); note('Saved ' + filename); }
+      catch (err) { note(err?.code === 'declined' ? '' : 'Could not save: ' + (err?.message || err?.code || err)); }
+      return;
+    }
+    const url = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    note('Saved ' + filename);
+  }
+  // Snapshots are taken inside the next frame, right after drawing, at an optional supersampled size.
+  let shotScale = 0;
+  function snapshot() { if (!shotScale) shotScale = +$('shotSize').value || 1; }
+  function finishSnapshot() {
+    const name = `${baseName()}-${stamp()}.png`;
+    canvas.toBlob(b => { if (b) saveFile(b, name); else note('Snapshot failed'); }, 'image/png');
+  }
+  const VIDEO_TYPES = [['video/mp4;codecs=avc1.640028', 'mp4'], ['video/mp4', 'mp4'], ['video/webm;codecs=vp9', 'webm'], ['video/webm;codecs=vp8', 'webm'], ['video/webm', 'webm']];
+  const videoType = typeof MediaRecorder !== 'undefined' && canvas.captureStream ? VIDEO_TYPES.find(([t]) => MediaRecorder.isTypeSupported(t)) : null;
+  let rec = null, recStart = 0;
+  function toggleRecording() {
+    if (!videoType) { note('This browser cannot record the canvas'); return; }
+    if (rec) { rec.stop(); return; }
+    const chunks = [], [type, ext] = videoType, name = `${baseName()}-${stamp()}.${ext}`;
+    const stream = canvas.captureStream(60);
+    rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: +$('vidRate').value * 1e6 });
+    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    rec.onstop = () => {
+      stream.getTracks().forEach(t => t.stop()); rec = null; syncCapture();
+      if (chunks.length) saveFile(new Blob(chunks, { type: type.split(';')[0] }), name);
+    };
+    rec.start(1000); recStart = performance.now(); syncCapture();
+  }
+  function syncCapture() {
+    $('record').textContent = rec ? 'Stop recording' : 'Record video';
+    $('record').classList.toggle('on', !!rec);
+    $('recBadge').hidden = !rec;
+  }
+  $('snap').onclick = snapshot;
+  $('record').onclick = toggleRecording;
+  if (!videoType) { $('record').disabled = true; $('record').title = 'This browser cannot record the canvas'; }
+  else $('vidFmt').textContent = videoType[1].toUpperCase();
 
   // ---------- 4D pose ----------
   // Spins act in the object's own frame (R <- R·G), so an equal XY + ZW spin always slides along Hopf fibres.
@@ -448,7 +503,7 @@
   const pvP = new Float64Array(9);
   function pivotMarker() {
     const c = state.pivot;
-    if (!c[0] && !c[1] && !c[2] && !c[3]) return;
+    if (!state.marker || (!c[0] && !c[1] && !c[2] && !c[3])) return;
     const pw = pivotWorld(), mode = state.mode === 'slice' ? 'ortho' : state.p4;
     if (!project(pw, 0, pvP, 0, mode, state.eye4)) return;
     const a = theme.accent, h = 0.07 * state.dist / 3.7;
@@ -621,7 +676,9 @@
     }
     if (state.mode === 'slice') $('wread').textContent = `w = ${state.slice >= 0 ? '+' : '−'}${Math.abs(state.slice).toFixed(3)}`;
 
-    const dpr = Math.min(devicePixelRatio || 1, 2);
+    let dpr = Math.min(devicePixelRatio || 1, 2);
+    const shooting = shotScale > 0;
+    if (shooting) dpr = Math.min(dpr * shotScale, gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) / Math.max(canvas.clientWidth, canvas.clientHeight));
     const W = Math.round(canvas.clientWidth * dpr), H = Math.round(canvas.clientHeight * dpr);
     if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
     gl.viewport(0, 0, W, H);
@@ -673,6 +730,8 @@
     }
     gl.bindVertexArray(null);
     if (now - statT > 250) { statT = now; $('stats').textContent = `${nTri.toLocaleString()} triangles · ${(nLine + nGhost).toLocaleString()} lines`; }
+    if (shooting) { shotScale = 0; finishSnapshot(); }
+    if (rec) { const s = Math.floor((now - recStart) / 1000); $('recBadge').textContent = `● REC ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
     requestAnimationFrame(frame);
   }
 

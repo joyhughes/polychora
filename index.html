@@ -81,6 +81,10 @@
   .legend .bar { width: 160px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, #3d4ed6, #1fb5b0, #f2c14e, #ee5d4a); }
   .legend .ends { display: flex; justify-content: space-between; }
   .wread { font: 500 15px var(--mono); color: var(--fg); }
+  .rec { position: absolute; right: 14px; top: 12px; font: 500 12px var(--mono); color: #fff; background: #d23b3b; padding: 3px 8px; border-radius: 5px; pointer-events: none; font-variant-numeric: tabular-nums; }
+  button.on { background: #d23b3b; border-color: #d23b3b; color: #fff; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .cap-note { color: var(--fg); }
   .err { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--fg); }
 
   @media (max-width: 760px) {
@@ -177,6 +181,7 @@
         <button id="pivotRandom">Random</button>
         <button id="recentre" title="Move the object back to the middle, keeping its orientation">Recentre</button>
       </div>
+      <div class="checks"><label><input type="checkbox" id="marker" checked> Show pivot marker</label></div>
       <p class="hint">Spins and 4D drags turn about this point, in the object's own coordinates. Off-centre, the object swings around it, in and out of the slice and toward or away from the 4D eye.</p>
     </section>
 
@@ -187,6 +192,18 @@
         <input type="radio" name="p3" id="p3-ortho" value="ortho"><label for="p3-ortho">Orthographic</label>
       </div>
       <p class="hint">Drag to orbit, scroll or pinch to zoom. <kbd>Shift</kbd>-drag (or right-drag) turns the object in 4D. <kbd>Space</kbd> pause, <kbd>[</kbd> <kbd>]</kbd> change object, <kbd>S</kbd> slice.</p>
+    </section>
+
+    <section>
+      <span class="label">Capture</span>
+      <div class="row"><label for="shotSize">Snapshot</label><select id="shotSize"><option value="1">Screen size</option><option value="2" selected>2× resolution</option><option value="4">4× resolution</option></select></div>
+      <div class="row"><label for="vidRate">Video</label><select id="vidRate"><option value="8">Standard, 8 Mbps</option><option value="20" selected>High, 20 Mbps</option><option value="50">Very high, 50 Mbps</option></select></div>
+      <div class="btns">
+        <button id="snap">Save snapshot</button>
+        <button id="record">Record video</button>
+      </div>
+      <p class="hint">Snapshots save as PNG and video as <span id="vidFmt">MP4 or WebM</span>, framed exactly as the scene is drawn. <kbd>P</kbd> snapshot, <kbd>R</kbd> start or stop recording.</p>
+      <p class="hint cap-note" id="capNote" hidden></p>
     </section>
   </aside>
 
@@ -200,6 +217,7 @@
       </div>
     </div>
     <div class="stats" id="stats"></div>
+    <div class="rec" id="recBadge" hidden></div>
     <div class="err" id="err" hidden></div>
   </main>
 </div>
