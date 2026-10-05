@@ -50,7 +50,7 @@
   const objOf = key => OBJECTS.find(o => o.key === key);
   let shapeSeq = 0;
   const newPlace = () => ({ off: [0, 0, 0, 0], scale: 1, rot: [0, 0, 0, 0, 0, 0] });
-  const newShape = (key, extra = {}) => ({ id: ++shapeSeq, key, prm: {}, op: 'add', visible: true, tint: 'own', place: newPlace(), ...extra });
+  const newShape = (key, extra = {}) => ({ id: ++shapeSeq, key, prm: {}, op: 'add', visible: true, tint: 'own', place: newPlace(), spin: [0, 0, 0, 0, 0, 0], ...extra });
   const scene = { shapes: [newShape('poly:small-stellated')], sel: 0 };
   const selShape = () => scene.shapes[scene.sel];
   const shapePrm = (sh, o = objOf(sh.key)) => sh.prm[o.key] ??= Object.fromEntries(paramDefs(o).map(d => [d.id, d.def]));
@@ -62,7 +62,7 @@
   const state = {
     key: 'poly:small-stellated', mode: 'proj', surf: 'solid', col: 'depth', p4: 'persp', p3: 'persp',
     edges: true, ghost: true, opacity: 0.18, eye4: 2.6, slice: 0, sweep: false, sweepSp: 0.25,
-    spin: [0, 0, 0.12, 0.3, 0, 0.18], playing: true, pivot: [0, 0, 0, 0], marker: true,
+    spin: [0, 0, 0.12, 0.3, 0, 0.18], playing: true, pivot: [0, 0, 0, 0], marker: true, renderer: 'mesh', gpuQ: 'medium',
     yaw: 0.5, pitch: -0.35, dist: 3.7,
   };
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) state.playing = false;
@@ -123,6 +123,8 @@
       ...['X', 'Y', 'Z', 'W'].map((nm, k) => ({ id: 'off' + k, label: 'Move ' + nm, min: -1.5, max: 1.5, step: 0.01, fmt: 2, get: () => pl.off[k], set: v => { pl.off[k] = v; } })),
       { id: 'scale', label: 'Scale', min: 0.2, max: 2.5, step: 0.01, fmt: 2, get: () => pl.scale, set: v => { pl.scale = v; } },
       ...PLANES.map(([nm], k) => ({ id: 'rot' + k, label: 'Turn ' + nm, min: -180, max: 180, step: 1, unit: '°', get: () => pl.rot[k], set: v => { pl.rot[k] = v; } })),
+      // this shape's own spin, so it can turn through the others
+      ...PLANES.map(([nm], k) => ({ id: 'spin' + k, label: 'Spin ' + nm, min: -90, max: 90, step: 1, unit: '°/s', get: () => sh.spin[k], set: v => { sh.spin[k] = v; } })),
     ];
     for (const d of defs) {
       const r = document.createElement('div'), id = 'pl-' + d.id;
@@ -141,7 +143,7 @@
     box.appendChild(tr);
     const br = document.createElement('div'); br.className = 'btns';
     br.innerHTML = '<button type="button">Reset placement</button>';
-    br.querySelector('button').onclick = () => { sh.place = newPlace(); dirty = true; buildParamUI(); };
+    br.querySelector('button').onclick = () => { sh.place = newPlace(); sh.spin = [0, 0, 0, 0, 0, 0]; dirty = true; buildParamUI(); };
     box.appendChild(br);
     $('params').appendChild(box);
   }
@@ -183,7 +185,7 @@
     selectShape(scene.shapes.length - 1); dirty = true;
   };
   $('dupShape').onclick = () => {
-    const s0 = selShape(), sh = newShape(s0.key, { prm: structuredClone(s0.prm), tint: nextTint(), place: structuredClone(s0.place) });
+    const s0 = selShape(), sh = newShape(s0.key, { prm: structuredClone(s0.prm), tint: nextTint(), place: structuredClone(s0.place), spin: [...s0.spin] });
     sh.place.off[0] = Math.min(1.5, sh.place.off[0] + 0.4);
     scene.shapes.splice(scene.sel + 1, 0, sh); selectShape(scene.sel + 1); dirty = true;
   };
@@ -202,6 +204,13 @@
     $('sweepSp').value = state.sweepSp; $('sweepSpO').value = state.sweepSp.toFixed(2);
     PLANES.forEach((_, i) => { $('sp' + i).value = state.spin[i]; $('sp' + i + 'O').value = state.spin[i].toFixed(2); });
     state.pivot.forEach((v, i) => { $('pv' + i).value = v; $('pv' + i + 'O').value = v.toFixed(2); });
+    const gpu = state.renderer === 'gpu';
+    // the ray tracer draws the slice
+    if (gpu) state.mode = 'slice';
+    $('m-proj').disabled = gpu; $('gpuRow').hidden = !gpu; $('gpuHint').hidden = !gpu;
+    $('gpuQ').value = state.gpuQ;
+    document.querySelector(`input[name=rend][value=${state.renderer}]`).checked = true;
+    document.querySelector('input[name=mode][value=' + state.mode + ']').checked = true;
     const slice = state.mode === 'slice';
     $('sliceSec').hidden = !slice; $('projSec').hidden = slice; $('ghostL').hidden = !slice;
     $('eyeRow').hidden = state.p4 !== 'persp'; $('stereoHint').hidden = state.p4 !== 'stereo';
@@ -213,6 +222,16 @@
 
   for (const n of ['mode', 'surf', 'col', 'p4', 'p3'])
     document.querySelectorAll(`input[name=${n}]`).forEach(r => r.addEventListener('change', () => { state[n] = r.value; syncUI(); }));
+  let gpuR = null, gpuFailed = false;
+  document.querySelectorAll('input[name=rend]').forEach(r => r.addEventListener('change', () => {
+    if (r.value === 'gpu' && !gpuR && !gpuFailed) {
+      try { gpuR = window.GPU.create(gl); } catch (err) { gpuFailed = true; console.error(err); }
+    }
+    if (r.value === 'gpu' && !gpuR) { note('The GPU ray tracer could not start in this browser'); state.renderer = 'mesh'; }
+    else state.renderer = r.value;
+    dirty = true; syncUI();
+  }));
+  $('gpuQ').addEventListener('change', e => { state.gpuQ = e.target.value; });
   $('edges').addEventListener('change', e => { state.edges = e.target.checked; });
   $('ghost').addEventListener('change', e => { state.ghost = e.target.checked; });
   $('sweep').addEventListener('change', e => { state.sweep = e.target.checked; if (state.sweep) sweepPhase = Math.asin(Math.max(-1, Math.min(1, state.slice / 0.999))); });
@@ -248,7 +267,7 @@
     if (e.key === ' ') { e.preventDefault(); state.playing = !state.playing; syncUI(); }
     else if (e.key === '[') step(-1);
     else if (e.key === ']') step(1);
-    else if (e.key === 's' || e.key === 'S') { state.mode = state.mode === 'slice' ? 'proj' : 'slice'; syncUI(); }
+    else if ((e.key === 's' || e.key === 'S') && state.renderer !== 'gpu') { state.mode = state.mode === 'slice' ? 'proj' : 'slice'; syncUI(); }
     else if (e.key === 'p' || e.key === 'P') snapshot();
     else if (e.key === 'r' || e.key === 'R') toggleRecording();
   });
@@ -783,14 +802,26 @@
   // ---------- frame ----------
   let last = performance.now(), sweepPhase = 0, frameCount = 0, statT = 0;
   let order = new Uint32Array(0);
+  let frameMs = 16;
   function frame(now) {
+    frameMs = frameMs * 0.9 + (now - last) * 0.1;
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
     if (state.playing) {
       aboutPivot(() => {
         PLANES.forEach(([, i, j], k) => { if (state.spin[k]) rotBody(R, i, j, state.spin[k] * dt); });
         if (++frameCount % 120 === 0) orthonormalize(R);
       });
-      if (scene.shapes.some(sh => sh.visible && sh.key === 'hopf' && shapePrm(sh).flow)) { hopfTime += dt; dirty = true; }
+      const mesh = state.renderer !== 'gpu';
+      if (scene.shapes.some(sh => sh.visible && sh.key === 'hopf' && shapePrm(sh).flow)) { hopfTime += dt; if (mesh) dirty = true; }
+      // shapes with their own spin turn about their own centres; the mesh renderer has to recombine them
+      let turned = false;
+      for (const sh of scene.shapes) {
+        if (!sh.spin.some(Boolean)) continue;
+        sh.place.rot = sh.place.rot.map((a, k) => { const v = a + sh.spin[k] * dt; return v > 180 ? v - 360 : v < -180 ? v + 360 : v; });
+        turned = true;
+        if (sh === selShape()) sh.place.rot.forEach((a, k) => { const inp = $('pl-rot' + k); if (inp && document.activeElement !== inp) { inp.value = a; inp.nextElementSibling.value = Math.round(a) + '°'; } });
+      }
+      if (turned && mesh) dirty = true;
     }
     if (dirty && !inFlight) { dirty = false; rebuild(); }
     if (state.mode === 'slice' && state.sweep && state.playing) {
@@ -812,7 +843,17 @@
     const proj = state.p3 === 'persp' ? matPersp(fov, asp, 0.05, 80) : matOrtho(state.dist * Math.tan(fov / 2), asp, -40, 80);
 
     nTri = 0; nLine = 0; nGhost = 0;
-    if (G) {
+    let rayPx = 0;
+    if (state.renderer === 'gpu' && gpuR) {
+      const q = shooting ? 1 : state.gpuQ === 'high' ? 1 : state.gpuQ === 'low' ? 0.5 / dpr : 1 / dpr;
+      rayPx = gpuR.draw({
+        descs: descs().filter(d => d.visible), R, T, slice: state.slice, view, proj, ortho: state.p3 === 'ortho', hopfTime,
+        mode: state.surf === 'solid' ? 0 : state.surf === 'trans' ? 1 : 2, opacity: Math.min(1, state.opacity * 1.6), depthCol: state.col === 'depth',
+        edges: state.edges || state.surf === 'wire', edgeCol: state.surf === 'solid' ? [...(theme.dark ? theme.canvas : [0.1, 0.11, 0.16]), 0.7] : [...theme.fg, state.surf === 'wire' ? 0.9 : 0.5],
+        width: W, height: H, scale: Math.min(1, Math.max(0.2, q)), background: theme.canvas,
+        pxAngle: (state.p3 === 'persp' ? 2 * Math.tan(fov / 2) : 2 * state.dist * Math.tan(fov / 2)) / H,
+      });
+    } else if (G) {
       transform();
       if (state.mode === 'proj') buildProjection(); else buildSlice();
     }
@@ -858,7 +899,8 @@
     if (now - statT > 250) {
       statT = now;
       const busy = refining ? 'refining the cut… · ' : inFlight && now - buildStart > 300 ? 'combining shapes… · ' : '';
-      $('stats').textContent = `${busy}${nTri.toLocaleString()} triangles · ${(nLine + nGhost).toLocaleString()} lines`;
+      $('stats').textContent = rayPx ? `ray traced on the GPU · ${rayPx.toLocaleString()} rays · ${Math.round(1000 / Math.max(1, frameMs))} fps`
+        : `${busy}${nTri.toLocaleString()} triangles · ${(nLine + nGhost).toLocaleString()} lines`;
     }
     if (shooting) { shotScale = 0; finishSnapshot(); }
     if (rec) { const s = Math.floor((now - recStart) / 1000); $('recBadge').textContent = `● REC ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }

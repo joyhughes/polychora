@@ -160,8 +160,9 @@
   //   (cos(th/2) e^{i(t+ph)}, sin(th/2) e^{it}),  t ∈ [0, 2π)
   const fibrePoint = (th, ph, t) => [Math.cos(th / 2) * Math.cos(t + ph), Math.cos(th / 2) * Math.sin(t + ph), Math.sin(th / 2) * Math.cos(t), Math.sin(th / 2) * Math.sin(t)];
 
-  function hopf(prm, time = 0) {
-    const M = new Mesh(), phase = (prm.phase + prm.flow * time) * DEG, base = [], rings = [];
+  // base points (polar angle, azimuth) on S² for the fibres, and the latitudes of the rings
+  function hopfBase(prm, time = 0) {
+    const phase = (prm.phase + prm.flow * time) * DEG, base = [], rings = [];
     if (prm.pattern === 'rings') {
       const K = prm.rings, N = prm.perRing;
       for (let k = 0; k < K; k++) {
@@ -179,6 +180,11 @@
         base.push([Math.acos(Math.max(-1, Math.min(1, z))), Math.atan2(y, x)]);
       }
     }
+    return { base, rings };
+  }
+
+  function hopf(prm, time = 0) {
+    const M = new Mesh(), { base, rings } = hopfBase(prm, time);
     for (const [th, ph] of base) {
       const pts = [];
       for (let i = 0; i < prm.segs; i++) pts.push(fibrePoint(th, ph, TAU * i / prm.segs));
@@ -268,6 +274,6 @@
     });
   }
 
-  root.Objects = { polytope, clifford, hopf, fractal, FRACTALS, hopfColor, hsl };
+  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, hsl };
   if (typeof module !== 'undefined') module.exports = root.Objects;
 })(typeof window !== 'undefined' ? window : globalThis);

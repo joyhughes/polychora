@@ -61,6 +61,7 @@
   .seg label { text-align: center; padding: 6px 4px; cursor: pointer; font-size: 13px; color: var(--muted); background: var(--chip); }
   .seg label + input + label, .seg input + label ~ label { border-left: 1px solid var(--line); }
   .seg input:checked + label { background: var(--fg); color: var(--panel); }
+  .seg input:disabled + label { opacity: .4; cursor: not-allowed; }
   .seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: -2px; }
   .row { display: grid; grid-template-columns: 74px 1fr 42px; align-items: center; gap: 8px; font-size: 13px; }
   .row select { padding: 4px 6px; grid-column: 2 / 4; }
@@ -142,6 +143,12 @@
 
     <section>
       <span class="label">View</span>
+      <div class="seg" role="radiogroup" title="How the scene is drawn">
+        <input type="radio" name="rend" id="r-mesh" value="mesh" checked><label for="r-mesh">Mesh</label>
+        <input type="radio" name="rend" id="r-gpu" value="gpu"><label for="r-gpu">Ray traced (GPU)</label>
+      </div>
+      <div class="row" id="gpuRow" hidden><label for="gpuQ">Quality</label><select id="gpuQ"><option value="high">High (every device pixel)</option><option value="medium">Medium</option><option value="low">Low (fastest)</option></select></div>
+      <p class="hint" id="gpuHint" hidden>The ray tracer draws the slice straight from the shapes, with no meshes, so shapes combine and move in real time. Give a shape its own Spin under Placement and colour to turn it through the others. Clifford tori and Hopf fibres become thin solid tubes, so they can cut too. Edges are drawn on convex polytopes.</p>
       <div class="seg" role="radiogroup">
         <input type="radio" name="mode" id="m-proj" value="proj" checked><label for="m-proj">Projection</label>
         <input type="radio" name="mode" id="m-slice" value="slice"><label for="m-slice">Slice</label>
@@ -249,4 +256,5 @@
 <script src="objects.js"></script>
 <script src="csg.js"></script>
 <script src="scene.js"></script>
+<script src="gpu.js"></script>
 <script src="app.js"></script>

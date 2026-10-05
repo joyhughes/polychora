@@ -17,6 +17,7 @@ Interactive WebGL2 viewer for 4D objects:
 - Projection (4D → 3D: perspective, orthographic or stereographic) or hyperplane slicing at any w, with an automatic sweep
 - 4D spin in all six rotation planes, with simple, double and isoclinic presets; Shift-drag rotates in 4D by hand
 - Off-centre rotation: set the centre of rotation anywhere in 4D (or snap it to a vertex), and the object swings around it, through the slice and toward or away from the 4D eye
+- GPU ray-traced slices: an alternative renderer that draws the slice straight from the shapes on the GPU, so combined shapes can move through each other in real time (give a shape its own Spin under Placement and colour)
 - Capture: save PNG snapshots (screen size, 2× or 4×) and record the canvas as MP4 or WebM video (`P` and `R` keys)
 - Solid, translucent (depth-sorted) or wireframe surfaces
 - Flat colours (by Hopf fibre) or colours by 4D depth (kata −w → ana +w)
@@ -35,6 +36,14 @@ Keys: Space pause, `[` `]` change polytope, `S` toggle slice.
 `objects.js` turns every object into one generic 4D mesh: surface triangles (drawn in projection, sliced into curves), solid tetrahedra (sliced into surfaces), edges, and polylines (drawn as tubes, sliced into points). Fractals are built by iterating their maps; cells shared by two copies are interior and removed.
 
 Slices are exact: each cell is decomposed into tetrahedra (cell centre + fan triangle of each face), and those are cut by the hyperplane every frame.
+
+`gpu.js` is the real-time alternative for the slice view. Each pixel's ray through the slice hyperplane is a line in 4D. Each shape turns that line into inside intervals:
+- **Convex polytopes:** by clipping against every cell's half-space.
+- **Star polytopes:** by clipping against the cones from the centre over each cell's fan tetrahedra, culled by the cone over the cell's convex hull.
+- **Fractals:** by walking the map tree, pruning by each copy's bounding polytope.
+- **Clifford torus and Hopf fibres:** by marching their distance fields as thin solid tubes.
+
+The interval lists are combined from the top down, and the surfaces where the result starts and stops are shaded (all of them, front to back, when translucent).
 
 `csg.js` combines shapes in 4D. Every solid gets a field that is negative inside: the largest `n·p − h` over the cells for a convex polytope; `|p| − r(p/|p|)` for a star polytope, whose solid is everything its cells hide from the centre; and the iterated maps applied to the base polytope for a fractal. Each field also reports the hyperplane it is resting on. Shapes are combined from the top down, one at a time. The result so far is clipped against the new shape, and the new shape against the result so far. A simplex the cut crosses on one flat piece is cut exactly. One where the cut bends is first split along the hyperplane of a boundary piece. Corners of the other shape that poke into a simplex are found exactly, by testing its cell, faces and edges against the other mesh's edges, faces and cells. The cut through each cell becomes new faces and edges, so projection, slicing and wireframe all show the combined shape. Faces two shapes share are kept exactly once. Surfaces and curves (Clifford torus, Hopf fibres) have no inside: they are cut by solids but cut nothing. Star polytopes keep their inner faces, as they do when shown alone. The work runs in a Web Worker (`worker.js`), so the view stays responsive. A combination that takes longer than about a second shows a coarse draft first, and then the full result (capped at about 15 s of refining). Changing the scene restarts the work at once.
 
