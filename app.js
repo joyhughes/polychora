@@ -51,7 +51,7 @@
   let shapeSeq = 0;
   const newPlace = () => ({ off: [0, 0, 0, 0], scale: 1, rot: [0, 0, 0, 0, 0, 0] });
   const newShape = (key, extra = {}) => ({ id: ++shapeSeq, key, prm: {}, op: 'add', visible: true, tint: 'own', place: newPlace(), spin: [0, 0, 0, 0, 0, 0], ...extra });
-  const scene = { shapes: [newShape('poly:small-stellated')], sel: 0 };
+  const scene = { shapes: [newShape('poly:grand-600')], sel: 0 };
   const selShape = () => scene.shapes[scene.sel];
   const shapePrm = (sh, o = objOf(sh.key)) => sh.prm[o.key] ??= Object.fromEntries(paramDefs(o).map(d => [d.id, d.def]));
   const params = o => shapePrm(selShape(), o);
@@ -60,8 +60,8 @@
   // ---------- UI state ----------
   const PLANES = [['XY', 0, 1], ['XZ', 0, 2], ['YZ', 1, 2], ['XW', 0, 3], ['YW', 1, 3], ['ZW', 2, 3]];
   const state = {
-    key: 'poly:small-stellated', mode: 'proj', surf: 'solid', col: 'depth', p4: 'persp', p3: 'persp',
-    edges: true, ghost: true, opacity: 0.18, eye4: 2.6, slice: 0, sweep: false, sweepSp: 0.25,
+    key: 'poly:grand-600', mode: 'slice', surf: 'solid', col: 'depth', p4: 'persp', p3: 'persp',
+    edges: true, ghost: false, opacity: 0.18, eye4: 2.6, slice: 0, sweep: true, sweepSp: 0.25,
     spin: [0, 0, 0.12, 0.3, 0, 0.18], playing: true, pivot: [0, 0, 0, 0], marker: true, renderer: 'mesh', gpuQ: 'medium',
     yaw: 0.5, pitch: -0.35, dist: 3.7,
   };
@@ -1030,7 +1030,7 @@
     const o = OBJECTS.find(o => o.key === t || o.key === 'poly:' + t || o.key === 'frac:' + t);
     if (o) state.key = o.key;
   }
-  const startKey = state.key; state.key = 'poly:small-stellated';
+  const startKey = state.key; state.key = 'poly:grand-600';
   R = initialPose();
   select(startKey);
   buildShapeList();
