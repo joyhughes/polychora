@@ -371,6 +371,16 @@
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
     const loc = gl.getAttribLocation(prog, 'aPos'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
+    // a reduced-resolution image is drawn onto the canvas as a texture (blitting into the canvas fails when it is
+    // multisampled, which it is with antialiasing on)
+    const copyProg = gl.createProgram();
+    gl.attachShader(copyProg, mk(gl.VERTEX_SHADER, VS));
+    gl.attachShader(copyProg, mk(gl.FRAGMENT_SHADER, `#version 300 es
+      precision highp float; uniform sampler2D uImg; uniform vec2 uSize; out vec4 o;
+      void main() { o = texture(uImg, gl_FragCoord.xy / uSize); }`));
+    gl.linkProgram(copyProg);
+    if (!gl.getProgramParameter(copyProg, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(copyProg));
+    const uImg = gl.getUniformLocation(copyProg, 'uImg'), uSize = gl.getUniformLocation(copyProg, 'uSize');
     const texture = gl.createTexture();
     let fbo = null, fboTex = null, fboW = 0, fboH = 0;
     const cache = new Map();
@@ -406,6 +416,8 @@
         fbo = fbo || gl.createFramebuffer(); fboTex = fboTex || gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, fboTex);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fboTex, 0);
         fboW = W; fboH = H;
@@ -433,12 +445,15 @@
       gl.uniform4fv(U.uTint, pad(tint, MAXS * 4)); gl.uniform1fv(U.uScl, pad(scl, MAXS));
       gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.bindVertexArray(vao); gl.drawArrays(gl.TRIANGLES, 0, 3); gl.bindVertexArray(null);
-      if (!direct) {
-        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fbo); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
-        gl.blitFramebuffer(0, 0, W, H, 0, 0, s.width, s.height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, s.width, s.height);
+      if (!direct) {
+        gl.disable(gl.BLEND);
+        gl.useProgram(copyProg);
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, fboTex); gl.uniform1i(uImg, 0); gl.uniform2f(uSize, s.width, s.height);
+        gl.bindVertexArray(vao); gl.drawArrays(gl.TRIANGLES, 0, 3); gl.bindVertexArray(null);
+        gl.enable(gl.BLEND);
+      }
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
       return W * H;
     }
