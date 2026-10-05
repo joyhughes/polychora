@@ -18,7 +18,7 @@ Interactive WebGL2 viewer for 4D objects:
 - 4D spin in all six rotation planes, with simple, double and isoclinic presets; Shift-drag rotates in 4D by hand
 - Off-centre rotation: set the centre of rotation anywhere in 4D (or snap it to a vertex), and the object swings around it, through the slice and toward or away from the 4D eye
 - GPU ray-traced slices: an alternative renderer that draws the slice straight from the shapes on the GPU, so combined shapes can move through each other in real time (give a shape its own Spin under Placement and colour)
-- Capture: save PNG snapshots (screen size, 2× or 4×) and record the canvas as MP4 or WebM video (`P` and `R` keys)
+- Capture: save PNG snapshots (screen size, 2× or 4×) and record the canvas as MP4 video (H.264 through WebCodecs and the vendored [mp4-muxer](https://github.com/Vanilagy/mp4-muxer); browsers without WebCodecs fall back to MediaRecorder, which may give WebM) (`P` and `R` keys)
 - Solid, translucent (depth-sorted) or wireframe surfaces
 - Flat colours (by Hopf fibre) or colours by 4D depth (kata −w → ana +w)
 - Perspective or orthographic 3D camera

@@ -297,21 +297,93 @@
     const name = `${baseName()}-${stamp()}.png`;
     canvas.toBlob(b => { if (b) saveFile(b, name); else note('Snapshot failed'); }, 'image/png');
   }
-  const VIDEO_TYPES = [['video/mp4;codecs=avc1.640028', 'mp4'], ['video/mp4', 'mp4'], ['video/webm;codecs=vp9', 'webm'], ['video/webm;codecs=vp8', 'webm'], ['video/webm', 'webm']];
-  const videoType = typeof MediaRecorder !== 'undefined' && canvas.captureStream ? VIDEO_TYPES.find(([t]) => MediaRecorder.isTypeSupported(t)) : null;
-  let rec = null, recStart = 0;
-  function toggleRecording() {
-    if (!videoType) { note('This browser cannot record the canvas'); return; }
-    if (rec) { rec.stop(); return; }
-    const chunks = [], [type, ext] = videoType, name = `${baseName()}-${stamp()}.${ext}`;
-    const stream = canvas.captureStream(60);
-    rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: +$('vidRate').value * 1e6 });
-    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-    rec.onstop = () => {
-      stream.getTracks().forEach(t => t.stop()); rec = null; syncCapture();
-      if (chunks.length) saveFile(new Blob(chunks, { type: type.split(';')[0] }), name);
+  // Video is MP4 wherever WebCodecs can encode H.264: each frame is encoded as it is drawn and packed with
+  // mp4-muxer (vendor/, loaded on first use). Otherwise the browser's own recorder, in MP4 if it can, else WebM.
+  const MR_TYPES = [['video/mp4;codecs=avc1.640028', 'mp4'], ['video/mp4', 'mp4'], ['video/webm;codecs=vp9', 'webm'], ['video/webm;codecs=vp8', 'webm'], ['video/webm', 'webm']];
+  const mrType = typeof MediaRecorder !== 'undefined' && canvas.captureStream ? MR_TYPES.find(([t]) => MediaRecorder.isTypeSupported(t)) : null;
+  const canEncode = typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
+  let muxerLib = null;
+  const loadMuxer = () => muxerLib ||= new Promise((ok, fail) => {
+    const s = document.createElement('script'); s.src = 'vendor/mp4-muxer.js';
+    s.onload = () => ok(window.Mp4Muxer); s.onerror = () => { muxerLib = null; fail(new Error('could not load the MP4 muxer')); };
+    document.head.appendChild(s);
+  });
+  // H.264 profiles from High 5.2 down, so large canvases still find a level that fits
+  const AVC = ['avc1.640034', 'avc1.640033', 'avc1.64002a', 'avc1.640028', 'avc1.4d0028', 'avc1.42e01f'];
+  async function avcConfig(width, height, bitrate) {
+    for (const codec of AVC) {
+      const c = { codec, width, height, bitrate, framerate: 60, avc: { format: 'avc' } };
+      try { if ((await VideoEncoder.isConfigSupported(c)).supported) return c; } catch { /* try the next */ }
+    }
+    return null;
+  }
+  async function startEncoder(bitrate) {
+    const M = await loadMuxer();
+    // even dimensions for H.264, and no more than a 4K frame's pixels
+    const k = Math.min(1, Math.sqrt(3840 * 2160 / (canvas.width * canvas.height)), 4096 / Math.max(canvas.width, canvas.height));
+    const w = Math.max(2, Math.floor(canvas.width * k / 2) * 2), h = Math.max(2, Math.floor(canvas.height * k / 2) * 2);
+    const cfg = await avcConfig(w, h, bitrate);
+    if (!cfg) return null;
+    const muxer = new M.Muxer({ target: new M.ArrayBufferTarget(), video: { codec: 'avc', width: w, height: h, frameRate: 60 }, fastStart: 'in-memory', firstTimestampBehavior: 'offset' });
+    let failed = null;
+    const enc = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: e => { failed = e; } });
+    enc.configure(cfg);
+    // frames are copied to a fixed-size canvas, so resizing the window mid-recording only rescales them
+    const copy = document.createElement('canvas'); copy.width = w; copy.height = h;
+    const cx = copy.getContext('2d');
+    let t0 = -1, lastKey = -1e9;
+    return {
+      ext: 'mp4',
+      frame(now) {
+        if (failed || enc.encodeQueueSize > 8) return; // drop a frame rather than fall behind
+        if (t0 < 0) t0 = now;
+        cx.drawImage(canvas, 0, 0, w, h);
+        const vf = new VideoFrame(copy, { timestamp: Math.round((now - t0) * 1000) });
+        const keyFrame = now - lastKey >= 2000;
+        if (keyFrame) lastKey = now;
+        enc.encode(vf, { keyFrame }); vf.close();
+      },
+      async stop() {
+        if (!failed) await enc.flush().catch(e => { failed = e; });
+        if (enc.state !== 'closed') enc.close();
+        if (failed) throw failed;
+        muxer.finalize();
+        return new Blob([muxer.target.buffer], { type: 'video/mp4' });
+      },
     };
-    rec.start(1000); recStart = performance.now(); syncCapture();
+  }
+  function startMediaRecorder(bitrate) {
+    const [type, ext] = mrType, chunks = [], stream = canvas.captureStream(60);
+    const mr = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: bitrate });
+    mr.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    mr.start(1000);
+    return {
+      ext,
+      stop: () => new Promise(done => {
+        mr.onstop = () => { stream.getTracks().forEach(t => t.stop()); done(chunks.length ? new Blob(chunks, { type: type.split(';')[0] }) : null); };
+        mr.stop();
+      }),
+    };
+  }
+  let rec = null, recStart = 0, recBusy = false;
+  async function toggleRecording() {
+    if (recBusy) return;
+    recBusy = true;
+    try {
+      if (rec) {
+        const r = rec; rec = null; syncCapture(); note('Finishing the video…');
+        try { const blob = await r.stop(); if (blob) await saveFile(blob, r.name); else note(''); }
+        catch (err) { note('Recording failed: ' + (err?.message || err)); }
+        return;
+      }
+      const bitrate = +$('vidRate').value * 1e6;
+      let r = null;
+      if (canEncode) try { r = await startEncoder(bitrate); } catch (err) { console.warn('MP4 encoder unavailable, using MediaRecorder', err); }
+      if (!r && mrType) r = startMediaRecorder(bitrate);
+      if (!r) { note('This browser cannot record the canvas'); return; }
+      r.name = `${baseName()}-${stamp()}.${r.ext}`;
+      rec = r; recStart = performance.now(); syncCapture();
+    } finally { recBusy = false; }
   }
   function syncCapture() {
     $('record').textContent = rec ? 'Stop recording' : 'Record video';
@@ -320,8 +392,11 @@
   }
   $('snap').onclick = snapshot;
   $('record').onclick = toggleRecording;
-  if (!videoType) { $('record').disabled = true; $('record').title = 'This browser cannot record the canvas'; }
-  else $('vidFmt').textContent = videoType[1].toUpperCase();
+  (async () => {
+    const fmt = canEncode && await avcConfig(1280, 720, 8e6) ? 'mp4' : mrType?.[1];
+    if (fmt) $('vidFmt').textContent = fmt.toUpperCase();
+    else { $('record').disabled = true; $('record').title = 'This browser cannot record the canvas'; }
+  })();
 
   // ---------- 4D pose ----------
   // Spins act in the object's own frame (R <- R·G), so an equal XY + ZW spin always slides along Hopf fibres.
@@ -921,6 +996,7 @@
         : `${busy}${nTri.toLocaleString()} triangles · ${(nLine + nGhost).toLocaleString()} lines`;
     }
     if (shooting) { shotScale = 0; finishSnapshot(); }
+    if (rec?.frame) rec.frame(now);
     if (rec) { const s = Math.floor((now - recStart) / 1000); $('recBadge').textContent = `● REC ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
     requestAnimationFrame(frame);
   }
