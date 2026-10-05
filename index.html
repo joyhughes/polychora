@@ -81,6 +81,21 @@
   .legend .bar { width: 160px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, #3d4ed6, #1fb5b0, #f2c14e, #ee5d4a); }
   .legend .ends { display: flex; justify-content: space-between; }
   .wread { font: 500 15px var(--mono); color: var(--fg); }
+  .shapes-box { display: flex; flex-direction: column; gap: 8px; }
+  .shapes { display: flex; flex-direction: column; gap: 4px; }
+  .shape { display: grid; grid-template-columns: 1fr 88px 24px 18px 24px; gap: 4px; align-items: center; }
+  .shape .nm { display: flex; align-items: center; gap: 8px; text-align: left; min-width: 0; padding: 5px 8px; }
+  .shape .nm span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .shape.sel .nm { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+  .shape.off .nm { opacity: .5; }
+  .shape .sw { flex: none; width: 12px; height: 12px; border-radius: 3px; }
+  .shape .op { padding: 4px 4px; font-size: 12px; }
+  .shape .op.base { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); text-align: center; }
+  .shape .ic { padding: 2px 0; font-size: 13px; line-height: 1.2; }
+  .shape .ic:disabled { visibility: hidden; }
+  details.place { border-top: 1px dashed var(--line); padding-top: 8px; margin-top: 4px; }
+  details.place summary { cursor: pointer; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  details.place .row, details.place .btns { margin-top: 4px; }
   .rec { position: absolute; right: 14px; top: 12px; font: 500 12px var(--mono); color: #fff; background: #d23b3b; padding: 3px 8px; border-radius: 5px; pointer-events: none; font-variant-numeric: tabular-nums; }
   button.on { background: #d23b3b; border-color: #d23b3b; color: #fff; }
   button:disabled { opacity: .45; cursor: not-allowed; }
@@ -99,10 +114,18 @@
 <div class="app">
   <aside>
     <h1>Polychoron viewer</h1>
+    <div class="shapes-box">
+      <div id="shapeList" class="shapes"></div>
+      <div class="btns">
+        <button id="addShape" title="Add a shape that cuts into or joins the others">Add shape</button>
+        <button id="dupShape" title="Copy the selected shape">Duplicate</button>
+      </div>
+      <p class="hint" id="shapesHint" hidden>Shapes combine from the top down: each one is added to, subtracted from or intersected with the result above it. Click a name to edit that shape.</p>
+    </div>
     <div class="pick">
-      <button id="prev" aria-label="Previous object">‹</button>
-      <select id="obj" aria-label="Object"></select>
-      <button id="next" aria-label="Next object">›</button>
+      <button id="prev" aria-label="Previous type">‹</button>
+      <select id="obj" aria-label="Type of the selected shape"></select>
+      <button id="next" aria-label="Next type">›</button>
     </div>
 
     <div class="card">
@@ -113,7 +136,7 @@
     </div>
 
     <section id="paramSec">
-      <span class="label">Parameters</span>
+      <span class="label">Shape</span>
       <div id="params"></div>
     </section>
 
@@ -224,4 +247,6 @@
 
 <script src="geometry.js"></script>
 <script src="objects.js"></script>
+<script src="csg.js"></script>
+<script src="scene.js"></script>
 <script src="app.js"></script>

@@ -44,8 +44,18 @@
     if (F.ratio) defs.push({ id: 'ratio', label: 'Ratio r', min: 0.25, max: 0.62, step: 0.005, def: F.ratioDefault ?? 0.5, fmt: 3 });
     return defs;
   }
-  const paramStore = {};
-  const params = o => paramStore[o.key] ??= Object.fromEntries(paramDefs(o).map(d => [d.id, d.def]));
+  // ---------- scene: several shapes, each with its own type, parameters, placement and colour ----------
+  const TINT_NAMES = [['own', 'Own colours'], ['amber', 'Amber'], ['teal', 'Teal'], ['rose', 'Rose'], ['violet', 'Violet'], ['lime', 'Lime'], ['sky', 'Sky'], ['white', 'White']];
+  const OPS = [['add', 'Add'], ['subtract', 'Subtract'], ['intersect', 'Intersect']];
+  const objOf = key => OBJECTS.find(o => o.key === key);
+  let shapeSeq = 0;
+  const newPlace = () => ({ off: [0, 0, 0, 0], scale: 1, rot: [0, 0, 0, 0, 0, 0] });
+  const newShape = (key, extra = {}) => ({ id: ++shapeSeq, key, prm: {}, op: 'add', visible: true, tint: 'own', place: newPlace(), ...extra });
+  const scene = { shapes: [newShape('poly:small-stellated')], sel: 0 };
+  const selShape = () => scene.shapes[scene.sel];
+  const shapePrm = (sh, o = objOf(sh.key)) => sh.prm[o.key] ??= Object.fromEntries(paramDefs(o).map(d => [d.id, d.def]));
+  const params = o => shapePrm(selShape(), o);
+  const shortName = o => (o.kind === 'poly' ? P.CATALOG.find(c => c.id === o.id).name : o.label);
 
   // ---------- UI state ----------
   const PLANES = [['XY', 0, 1], ['XZ', 0, 2], ['YZ', 1, 2], ['XW', 0, 3], ['YW', 1, 3], ['ZW', 2, 3]];
@@ -100,7 +110,83 @@
       });
     }
     refreshParamVisibility();
+    buildPlaceUI();
   }
+  // where the selected shape sits in 4D, and its colour
+  let placeOpen = false;
+  function buildPlaceUI() {
+    const sh = selShape(), pl = sh.place, box = document.createElement('details');
+    box.className = 'place'; box.open = placeOpen || scene.shapes.length > 1;
+    box.addEventListener('toggle', () => { placeOpen = box.open; });
+    box.innerHTML = '<summary>Placement and colour</summary>';
+    const defs = [
+      ...['X', 'Y', 'Z', 'W'].map((nm, k) => ({ id: 'off' + k, label: 'Move ' + nm, min: -1.5, max: 1.5, step: 0.01, fmt: 2, get: () => pl.off[k], set: v => { pl.off[k] = v; } })),
+      { id: 'scale', label: 'Scale', min: 0.2, max: 2.5, step: 0.01, fmt: 2, get: () => pl.scale, set: v => { pl.scale = v; } },
+      ...PLANES.map(([nm], k) => ({ id: 'rot' + k, label: 'Turn ' + nm, min: -180, max: 180, step: 1, unit: '°', get: () => pl.rot[k], set: v => { pl.rot[k] = v; } })),
+    ];
+    for (const d of defs) {
+      const r = document.createElement('div'), id = 'pl-' + d.id;
+      r.className = 'row';
+      r.innerHTML = `<label for="${id}">${d.label}</label><input type="range" id="${id}" min="${d.min}" max="${d.max}" step="${d.step}"><output></output>`;
+      const inp = r.querySelector('input'), out = r.querySelector('output');
+      inp.value = d.get(); out.value = fmtVal(d, d.get());
+      inp.addEventListener('input', () => { d.set(+inp.value); out.value = fmtVal(d, d.get()); dirty = true; });
+      box.appendChild(r);
+    }
+    const tr = document.createElement('div');
+    tr.className = 'row';
+    tr.innerHTML = `<label for="pl-tint">Colour</label><select id="pl-tint">${TINT_NAMES.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select>`;
+    const ts = tr.querySelector('select'); ts.value = sh.tint;
+    ts.addEventListener('change', () => { sh.tint = ts.value; dirty = true; buildShapeList(); });
+    box.appendChild(tr);
+    const br = document.createElement('div'); br.className = 'btns';
+    br.innerHTML = '<button type="button">Reset placement</button>';
+    br.querySelector('button').onclick = () => { sh.place = newPlace(); dirty = true; buildParamUI(); };
+    box.appendChild(br);
+    $('params').appendChild(box);
+  }
+
+  // ---------- shape list ----------
+  const rgbCss = c => `rgb(${c.map(x => Math.round(Math.min(1, x) * 255)).join(',')})`;
+  const OWN_SWATCH = 'conic-gradient(#f2b84b, #1fb5b0, #3d4ed6, #ee5d4a, #f2b84b)';
+  function buildShapeList() {
+    const box = $('shapeList'); box.innerHTML = '';
+    scene.shapes.forEach((sh, i) => {
+      const o = objOf(sh.key), r = document.createElement('div');
+      r.className = 'shape' + (i === scene.sel ? ' sel' : '') + (sh.visible ? '' : ' off');
+      const sw = sh.tint === 'own' ? OWN_SWATCH : rgbCss(window.CSG.TINTS[sh.tint]);
+      r.innerHTML = `<button type="button" class="nm" title="Edit this shape"><span class="sw" style="background:${sw}"></span><span></span></button>` +
+        (i ? `<select class="op" aria-label="How this shape combines with the ones above">${OPS.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select>` : '<span class="op base" title="The first shape is the starting point">Base</span>') +
+        `<button type="button" class="ic up" title="Move up" aria-label="Move up"${i ? '' : ' disabled'}>↑</button>` +
+        `<input type="checkbox" class="vis" title="Show this shape" aria-label="Show this shape"${sh.visible ? ' checked' : ''}>` +
+        `<button type="button" class="ic rm" title="Remove" aria-label="Remove shape"${scene.shapes.length > 1 ? '' : ' disabled'}>×</button>`;
+      r.querySelector('.nm span:last-child').textContent = shortName(o);
+      r.querySelector('.nm').onclick = () => selectShape(i);
+      const op = r.querySelector('select.op');
+      if (op) { op.value = sh.op; op.addEventListener('change', () => { sh.op = op.value; dirty = true; }); }
+      r.querySelector('.vis').addEventListener('change', e => { sh.visible = e.target.checked; r.classList.toggle('off', !sh.visible); dirty = true; });
+      r.querySelector('.up').onclick = () => { if (!i) return; [scene.shapes[i - 1], scene.shapes[i]] = [scene.shapes[i], scene.shapes[i - 1]]; selectShape(i - 1); dirty = true; };
+      r.querySelector('.rm').onclick = () => { if (scene.shapes.length < 2) return; scene.shapes.splice(i, 1); selectShape(Math.min(scene.sel >= i ? Math.max(0, scene.sel - 1) : scene.sel, scene.shapes.length - 1)); dirty = true; };
+      box.appendChild(r);
+    });
+    $('shapesHint').hidden = scene.shapes.length < 2;
+  }
+  function selectShape(i) {
+    scene.sel = i; state.key = selShape().key;
+    buildParamUI(); buildShapeList(); showInfo(); syncUI();
+  }
+  const nextTint = () => TINT_NAMES[1 + (scene.shapes.length - 1) % (TINT_NAMES.length - 1)][0];
+  $('addShape').onclick = () => {
+    // a tesseract cutting into the current shape is the quickest way to see what subtraction does
+    const solid = scene.shapes.some(sh => ['poly', 'frac'].includes(objOf(sh.key).kind));
+    scene.shapes.push(newShape('poly:tesseract', { op: solid ? 'subtract' : 'add', tint: nextTint(), place: { off: [0.45, 0.2, 0.1, 0.25], scale: 0.7, rot: [0, 0, 0, 0, 0, 0] } }));
+    selectShape(scene.shapes.length - 1); dirty = true;
+  };
+  $('dupShape').onclick = () => {
+    const s0 = selShape(), sh = newShape(s0.key, { prm: structuredClone(s0.prm), tint: nextTint(), place: structuredClone(s0.place) });
+    sh.place.off[0] = Math.min(1.5, sh.place.off[0] + 0.4);
+    scene.shapes.splice(scene.sel + 1, 0, sh); selectShape(scene.sel + 1); dirty = true;
+  };
   function refreshParamVisibility() {
     const o = cur(), prm = params(o);
     for (const d of paramDefs(o)) { const r = $('params').querySelector(`[data-id="${d.id}"]`); if (r) r.hidden = d.show ? !d.show(prm) : false; }
@@ -142,6 +228,7 @@
   $('pivotCentre').onclick = () => setPivot([0, 0, 0, 0]);
   $('pivotVertex').onclick = () => {
     // a random outermost point of the object: a vertex for the polytopes and fractals
+    if (!G || !G.npts) return;
     const { pts, npts } = G; let m = 0;
     for (let i = 0; i < npts; i++) m = Math.max(m, Math.hypot(pts[i * 4], pts[i * 4 + 1], pts[i * 4 + 2], pts[i * 4 + 3]));
     const far = []; for (let i = 0; i < npts; i++) if (Math.hypot(pts[i * 4], pts[i * 4 + 1], pts[i * 4 + 2], pts[i * 4 + 3]) > m * 0.995) far.push(i);
@@ -273,31 +360,53 @@
   new MutationObserver(readTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
   // ---------- object loading ----------
-  let G = null, dirty = true, hopfTime = 0, lastInfo = '';
+  let G = null, dirty = true, hopfTime = 0, lastInfo = '', lastInfos = [];
   function select(key) {
-    const was = cur();
-    state.key = key;
+    const was = objOf(selShape().key);
+    state.key = key; selShape().key = key;
     const o = cur();
-    if (!was || was.s3 !== o.s3 || was.kind !== o.kind) {
+    // a single shape sets up the view to suit it; with several, the view is left alone
+    if (scene.shapes.length === 1 && (!was || was.s3 !== o.s3 || was.kind !== o.kind || !G)) {
       if (o.s3) { state.p4 = 'stereo'; state.dist = 7.5; }
       else { if (state.p4 === 'stereo') state.p4 = 'persp'; state.dist = 3.7; }
       if (o.kind === 'hopf') state.col = 'flat'; // fibres coloured by their point on S²
       R = initialPose(); T = [0, 0, 0, 0];
     }
-    buildParamUI(); dirty = true; syncUI();
+    buildParamUI(); buildShapeList(); dirty = true; syncUI();
   }
+  const descs = () => scene.shapes.map(sh => { const o = objOf(sh.key); return { id: sh.id, key: sh.key, kind: o.kind, oid: o.id, prm: shapePrm(sh, o), place: sh.place, op: sh.op, tint: sh.tint, visible: sh.visible }; });
+  // Shapes are built and combined in a worker when the browser allows it, else right here.
+  let worker = null, inFlight = 0, jobSeq = 0, buildStart = 0;
+  try {
+    worker = new Worker('worker.js');
+    worker.onmessage = e => {
+      const r = e.data; inFlight = 0;
+      if (r.error) { console.error(r.error); worker = null; dirty = true; return; }
+      applyBuild(r);
+    };
+    worker.onerror = e => { e.preventDefault(); worker = null; inFlight = 0; dirty = true; };
+  } catch { worker = null; }
   function rebuild() {
-    const o = cur(), prm = params(o);
-    const m = o.kind === 'poly' ? O.polytope(o.id, prm) : o.kind === 'clifford' ? O.clifford(prm) : o.kind === 'hopf' ? O.hopf(prm, hopfTime) : O.fractal(o.id, prm);
+    const d = descs();
+    if (worker) { inFlight = ++jobSeq; buildStart = performance.now(); worker.postMessage({ job: inFlight, descs: d, hopfTime }); }
+    else applyBuild(window.Scene.build(d, hopfTime));
+  }
+  function applyBuild(r) {
+    const m = r.G;
     m.q = new Float64Array(m.npts * 4); m.p3 = new Float64Array(m.npts * 3); m.ok = new Uint8Array(m.npts);
-    G = m;
-    const info = JSON.stringify(m.info);
-    if (info !== lastInfo) {
-      lastInfo = info;
-      $('pname').textContent = m.info.name; $('psym').textContent = m.info.sub;
-      $('counts').innerHTML = m.info.counts.map(([l, v]) => `<div><b>${v}</b><span>${l}</span></div>`).join('');
-      $('rows').innerHTML = m.info.rows.map(([t, d]) => `<dt>${t}</dt><dd>${d}</dd>`).join('');
-    }
+    G = m; lastInfos = r.infos; lastBuildMs = r.ms;
+    showInfo();
+  }
+  let lastBuildMs = 0;
+  function showInfo() {
+    const info = lastInfos[scene.sel];
+    if (!info) return;
+    const key = JSON.stringify(info);
+    if (key === lastInfo) return;
+    lastInfo = key;
+    $('pname').textContent = info.name; $('psym').textContent = info.sub;
+    $('counts').innerHTML = info.counts.map(([l, v]) => `<div><b>${v}</b><span>${l}</span></div>`).join('');
+    $('rows').innerHTML = info.rows.map(([t, d]) => `<dt>${t}</dt><dd>${d}</dd>`).join('');
   }
 
   // ---------- GL ----------
@@ -572,12 +681,12 @@
       let first = -1;
       for (let k = 0; k < c.n; k++) if (!ok[c.start + k]) { first = k; break; }
       const colFn = depth ? (i, out, o) => depthColor(q[runIdx[i] * 4 + 3], out, o) : (i, out, o) => { out[o] = c.col[0]; out[o + 1] = c.col[1]; out[o + 2] = c.col[2]; };
-      if (first < 0) { for (let k = 0; k < c.n; k++) runIdx[k] = c.start + k; tube(runIdx, c.n, c.closed, G.tubeR, colFn, ta); continue; }
+      if (first < 0) { for (let k = 0; k < c.n; k++) runIdx[k] = c.start + k; tube(runIdx, c.n, c.closed, c.r, colFn, ta); continue; }
       let m = 0;
       for (let s = 1; s <= c.n; s++) {
         const k = c.closed ? (first + s) % c.n : s - 1, idx = c.start + k;
         if (ok[idx]) runIdx[m++] = idx;
-        if (!ok[idx] || s === c.n) { if (m > 1) tube(runIdx, m, false, G.tubeR, colFn, ta); m = 0; }
+        if (!ok[idx] || s === c.n) { if (m > 1) tube(runIdx, m, false, c.r, colFn, ta); m = 0; }
       }
     }
   }
@@ -623,11 +732,13 @@
       }
     }
     // surface triangles: their cut is a curve. Pure surfaces draw it as a tube; solids draw it as an outline.
-    const asTube = G.sliceTube > 0 && !wire;
-    if (asTube || state.edges || wire || G.sliceTube > 0) {
-      const [base, a] = edgeStyle(0);
+    const triTube = G.triTube;
+    if (G.hasTube || state.edges || wire) {
+      const [base, a] = edgeStyle(0), outline = state.edges || wire;
       const up = [false, false, false], f = [0, 0, 0];
       for (let t = 0; t < tris.length; t += 3) {
+        const tr = triTube[t / 3];
+        if (!tr && !outline) continue;
         f[0] = tris[t]; f[1] = tris[t + 1]; f[2] = tris[t + 2];
         for (let k = 0; k < 3; k++) up[k] = q[f[k] * 4 + 3] > s;
         if (up[0] === up[1] && up[1] === up[2]) continue;
@@ -636,8 +747,8 @@
         if (up[1] !== up[2]) cross(f[1], f[2], s, n++);
         if (up[2] !== up[0]) cross(f[2], f[0], s, n++);
         const cr = depth ? sliceCol[0] : triCol[t], cg = depth ? sliceCol[1] : triCol[t + 1], cb = depth ? sliceCol[2] : triCol[t + 2];
-        if (asTube) segTube(ix, 0, ix, 3, G.sliceTube, cr, cg, cb, alpha);
-        else if (G.sliceTube > 0) pushLine(0, ix, 0, ix, 3, cr, cg, cb, 0.95);
+        if (tr && !wire) segTube(ix, 0, ix, 3, tr, cr, cg, cb, alpha);
+        else if (tr) pushLine(0, ix, 0, ix, 3, cr, cg, cb, 0.95);
         else pushLine(0, ix, 0, ix, 3, base[0], base[1], base[2], state.surf === 'solid' ? 0.6 : wire ? 0.85 : 0.45);
       }
     }
@@ -649,7 +760,7 @@
         if ((q[i * 4 + 3] > s) === (q[j * 4 + 3] > s)) continue;
         cross(i, j, s, 0);
         const col = depth ? sliceCol : c.col;
-        sphere(ix[0], ix[1], ix[2], G.tubeR * 2, col[0], col[1], col[2], 1);
+        sphere(ix[0], ix[1], ix[2], c.r * 2, col[0], col[1], col[2], 1);
       }
     }
     if (state.ghost) { edgeLines(1, false); curveLines(1, false); }
@@ -665,10 +776,9 @@
         PLANES.forEach(([, i, j], k) => { if (state.spin[k]) rotBody(R, i, j, state.spin[k] * dt); });
         if (++frameCount % 120 === 0) orthonormalize(R);
       });
-      const o = cur();
-      if (o.kind === 'hopf' && params(o).flow) { hopfTime += dt; dirty = true; }
+      if (scene.shapes.some(sh => sh.visible && sh.key === 'hopf' && shapePrm(sh).flow)) { hopfTime += dt; dirty = true; }
     }
-    if (dirty) { dirty = false; rebuild(); }
+    if (dirty && !inFlight) { dirty = false; rebuild(); }
     if (state.mode === 'slice' && state.sweep && state.playing) {
       sweepPhase += dt * state.sweepSp * 2;
       state.slice = 0.999 * Math.sin(sweepPhase);
@@ -688,8 +798,10 @@
     const proj = state.p3 === 'persp' ? matPersp(fov, asp, 0.05, 80) : matOrtho(state.dist * Math.tan(fov / 2), asp, -40, 80);
 
     nTri = 0; nLine = 0; nGhost = 0;
-    transform();
-    if (state.mode === 'proj') buildProjection(); else buildSlice();
+    if (G) {
+      transform();
+      if (state.mode === 'proj') buildProjection(); else buildSlice();
+    }
     pivotMarker();
 
     if (nTri) {
@@ -729,7 +841,11 @@
       gl.drawArrays(gl.LINES, 0, nGhost * 2);
     }
     gl.bindVertexArray(null);
-    if (now - statT > 250) { statT = now; $('stats').textContent = `${nTri.toLocaleString()} triangles · ${(nLine + nGhost).toLocaleString()} lines`; }
+    if (now - statT > 250) {
+      statT = now;
+      const busy = inFlight && now - buildStart > 300 ? 'combining shapes… · ' : '';
+      $('stats').textContent = `${busy}${nTri.toLocaleString()} triangles · ${(nLine + nGhost).toLocaleString()} lines`;
+    }
     if (shooting) { shotScale = 0; finishSnapshot(); }
     if (rec) { const s = Math.floor((now - recStart) / 1000); $('recBadge').textContent = `● REC ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
     requestAnimationFrame(frame);
@@ -767,5 +883,6 @@
   const startKey = state.key; state.key = 'poly:small-stellated';
   R = initialPose();
   select(startKey);
+  buildShapeList();
   requestAnimationFrame(frame);
 })();

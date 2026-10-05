@@ -7,6 +7,8 @@ Interactive WebGL2 viewer for 4D objects:
 - **Hopf fibration**: fibres over latitude rings, a Fibonacci spread over S², or one tilted great circle; ring count, latitude, spread, phase, animated flow, tube radius, and optional Hopf tori
 - **Sierpinski fractals**: pentatope, 16-cell, Cantor tesseract, Menger tesseract and Vicsek tesseract, with fractal depth and (where it applies) the scale ratio; the similarity dimension is shown live
 
+**Combine them:** stack any number of shapes, each with its own type, parameters, 4D placement (offset, scale, rotation in all six planes) and colour, and add, subtract or intersect them in 4D.
+
 **Live:** https://joyhughes.github.io/polychora/
 
 ## Features
@@ -32,5 +34,7 @@ Keys: Space pause, `[` `]` change polytope, `S` toggle slice.
 `objects.js` turns every object into one generic 4D mesh: surface triangles (drawn in projection, sliced into curves), solid tetrahedra (sliced into surfaces), edges, and polylines (drawn as tubes, sliced into points). Fractals are built by iterating their maps; cells shared by two copies are interior and removed.
 
 Slices are exact: each cell is decomposed into tetrahedra (cell centre + fan triangle of each face), and those are cut by the hyperplane every frame.
+
+`csg.js` combines shapes in 4D. Every solid gets a field that is negative inside: the largest `n·p − h` over the cells for a convex polytope; `|p| − r(p/|p|)` for a star polytope, whose solid is everything its cells hide from the centre; and the iterated maps applied to the base polytope for a fractal. Each field also reports the hyperplane it is resting on. Shapes are combined from the top down, one at a time. The result so far is clipped against the new shape, and the new shape against the result so far. A simplex the cut crosses on one flat piece is cut exactly. One where the cut bends is first split along the hyperplane of a boundary piece. Corners of the other shape that poke into a simplex are found exactly, by testing its cell, faces and edges against the other mesh's edges, faces and cells. The cut through each cell becomes new faces and edges, so projection, slicing and wireframe all show the combined shape. Faces two shapes share are kept exactly once. Surfaces and curves (Clifford torus, Hopf fibres) have no inside: they are cut by solids but cut nothing. Star polytopes keep their inner faces, as they do when shown alone. The work runs in a Web Worker (`worker.js`), so the view stays responsive while big combinations are computed.
 
 No build step; open `index.html` from any static server.
