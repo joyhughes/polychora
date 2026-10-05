@@ -150,7 +150,7 @@
   };
   $('pivotRandom').onclick = () => setPivot([0, 1, 2, 3].map(() => (Math.random() * 2 - 1) * 1.1));
   $('marker').addEventListener('change', e => { state.marker = e.target.checked; });
-  $('recentre').onclick = () => { T = [0, 0, 0, 0]; };
+  $('recentre').onclick = () => { T = [0, 0, 0, 0]; setPivot([0, 0, 0, 0]); };
   const preset = s => () => { state.spin = s; state.playing = true; syncUI(); };
   $('presetSimple').onclick = preset([0, 0, 0, 0.4, 0, 0]);
   $('presetDouble').onclick = preset([0, 0, 0.12, 0.3, 0, 0.18]);
