@@ -144,7 +144,7 @@
   function field(o, prm) {
     if (o.kind === 'poly') {
       const T = Poly.polytope(o.id);
-      return T.spec.kind !== 'star' ? { f: convexField(planesOf(T)), lip: 1 } : { f: starField(T), lip: 3 };
+      return T.spec.kind !== 'star' ? { f: convexField(planesOf(T)), lip: 1, convex: true } : { f: starField(T), lip: 3 };
     }
     if (o.kind === 'frac') return { f: fractalField(o.id, prm), lip: 1 };
     return null;
@@ -291,12 +291,14 @@
   }
 
   // items: [{ mesh, field: {f, lip} | null, place, op, tint }] — visible shapes, top to bottom
-  // opt.depth: how many times one simplex may be split while resolving the cut
+  // opt.depth: how many times one simplex may be split while resolving the cut. Against a convex shape, splits
+  // along its cell hyperplanes have their own, larger budget (opt.planes): a big simplex passing right through
+  // the shape needs one split per cell, and running out early would keep the part inside it.
   // Shapes are combined one at a time, so the running result (with its own cut edges and faces) is what the
   // next shape is clipped against: every corner where boundaries meet is then an actual edge of a mesh.
   // opt.deadline: a Date.now() time after which compose gives up by throwing CSG.TIMEOUT
   function compose(items, opt = {}) {
-    const n = items.length, maxDepth = opt.depth ?? 10, deadline = opt.deadline ?? Infinity;
+    const n = items.length, maxDepth = opt.depth ?? 10, maxPlanes = opt.planes ?? 24, deadline = opt.deadline ?? Infinity;
     let ticks = 0;
     const tick = () => { if ((++ticks & 255) === 0 && Date.now() > deadline) throw TIMEOUT; };
     const P = items.map(it => placement(it.place));
@@ -349,7 +351,10 @@
     // bound the region (for exact detection of corners poking into a simplex).
     // region(p) < 0 inside the new result; first: true for the earlier result's pieces (they win ties where
     // a piece lies exactly in the boundary), false for the new shape's.
-    function clipPass(M, out, keep, lip, featSrc, region, first) {
+    // beyond: when keep is ± a convex shape's field, what happens past any of its cell hyperplanes, where the shape
+    // cannot reach: 'all' (keep = −field), 'none' (keep = field), or null. Splits along those planes then settle
+    // the far side at once, so a simplex passing through the shape is cut once per cell instead of into a tree.
+    function clipPass(M, out, keep, lip, featSrc, region, first, beyond = null) {
       const base = out.npts;
       for (const x of M.pts) out.pts.push(x);
       let sliceR = 0;
@@ -484,6 +489,10 @@
       };
 
       // decide what to do with a simplex: 'all' | 'none' | 'mid' (halve it) | 'cut' (march) | a hyperplane to split by
+      // depth packs the halvings so far (low 5 bits) and the plane splits (the rest)
+      // (plane splits only get their own budget against a convex shape, where each one settles its far side;
+      // elsewhere they count like halvings)
+      const MID = 1, PLANE = beyond ? 32 : 1, spent = d => (d & 31) >= maxDepth || d >> 5 >= maxPlanes;
       const classify = (vs, depth) => {
         tick();
         let nin = 0, nout = 0, minAbs = Infinity, maxL = 0;
@@ -497,7 +506,13 @@
             if (offV === null) return coincident(vs);
             inside = offV < 0;
           }
-          if (depth >= maxDepth) return inside ? 'all' : 'none';
+          if (spent(depth)) {
+            // out of splits: the corners can all be on one side while most of the piece is on the other (a big
+            // simplex through a dent of a star polytope), so points inside the piece vote
+            let other = 0;
+            for (const w of PROBES[vs.length]) { const x = at(vs, w); if (inside ? x > EPS : x < -EPS) other++; }
+            return (other * 2 > PROBES[vs.length].length) !== inside ? 'all' : 'none';
+          }
           for (let a = 0; a < vs.length; a++) for (let b = a + 1; b < vs.length; b++) maxL = Math.max(maxL, len2(vs[a], vs[b]));
           if (minAbs > lip * Math.sqrt(maxL)) return inside ? 'all' : 'none';
           // the boundary is close: a corner of another shape inside this simplex means the cut may poke in
@@ -515,7 +530,7 @@
           }
           return inside ? 'all' : 'none';
         }
-        if (depth >= maxDepth) return 'cut';
+        if (spent(depth)) return 'cut';
         for (let a = 0; a < vs.length; a++) for (let b = a + 1; b < vs.length; b++) maxL = Math.max(maxL, len2(vs[a], vs[b]));
         maxL = Math.sqrt(maxL);
         // the cut's corners: crossings on edges from inside to outside, plus vertices already on the boundary
@@ -568,7 +583,7 @@
         const cl = classify([a, b, c, d], depth);
         if (cl === 'none') return;
         if (cl === 'all') { pushTet(a, b, c, d, col, ctr); if (depth) capFaces(a, b, c, d, col); return; }
-        const e = depth + 1;
+        const e = depth + (cl === 'mid' ? MID : PLANE);
         if (cl === 'mid') {
           const ab = mid(a, b), ac = mid(a, c), ad = mid(a, d), bc = mid(b, c), bd = mid(b, d), cd = mid(c, d);
           clipTet(a, ab, ac, ad, col, ctr, e); clipTet(ab, b, bc, bd, col, ctr, e); clipTet(ac, bc, c, cd, col, ctr, e); clipTet(ad, bd, cd, d, col, ctr, e);
@@ -582,7 +597,8 @@
         }
         splits++;
         const sub = (p, q, r, w) => clipTet(p, q, r, w, col, ctr, e);
-        marchTet(v, v.map(x => g(cl, x) < 0), planeCut(cl), sub, sub);
+        const far = beyond === 'all' ? (p, q, r, w) => { pushTet(p, q, r, w, col, ctr); capFaces(p, q, r, w, col); } : beyond === 'none' ? () => {} : sub;
+        marchTet(v, v.map(x => g(cl, x) < 0), planeCut(cl), sub, far);
       };
       // ---- triangles (faces); their cut edges become new edges ----
       const clipTri = (a, b, c, col, depth) => {
@@ -590,7 +606,7 @@
         const cl = classify([a, b, c], depth);
         if (cl === 'none') return;
         if (cl === 'all') { pushTri(a, b, c, col); if (depth) capEdges(a, b, c); return; }
-        const e = depth + 1;
+        const e = depth + (cl === 'mid' ? MID : PLANE);
         if (cl === 'mid') {
           const ab = mid(a, b), bc = mid(b, c), ca = mid(c, a);
           clipTri(a, ab, ca, col, e); clipTri(ab, b, bc, col, e); clipTri(ca, bc, c, col, e); clipTri(ab, bc, ca, col, e);
@@ -602,7 +618,8 @@
           return;
         }
         const sub = (p, q, r) => clipTri(p, q, r, col, e);
-        marchTri(v, v.map(x => g(cl, x) < 0), planeCut(cl), sub, sub);
+        const far = beyond === 'all' ? (p, q, r) => { pushTri(p, q, r, col); capEdges(p, q, r); } : beyond === 'none' ? () => {} : sub;
+        marchTri(v, v.map(x => g(cl, x) < 0), planeCut(cl), sub, far);
       };
       const clipEdge = (a, b, depth) => {
         if (a === b) return;
@@ -611,7 +628,12 @@
         if (cl === 'all') { out.edges.push(a, b); return; }
         if (cl === 'cut') { const ain = val(a) < -EPS, x = ain ? cut(a, b) : cut(b, a); if (ain ? x !== a : x !== b) out.edges.push(ain ? a : x, ain ? x : b); return; }
         const m = cl === 'mid' ? mid(a, b) : (g(cl, a) < 0 ? planeCut(cl)(a, b) : planeCut(cl)(b, a));
-        clipEdge(a, m, depth + 1); clipEdge(m, b, depth + 1);
+        const e = depth + (cl === 'mid' ? MID : PLANE);
+        for (const [p, q] of [[a, m], [m, b]]) {
+          // the half past the plane is settled when the plane bounds a convex shape
+          const farSide = cl !== 'mid' && beyond && g(cl, p === m ? q : p) > 0;
+          if (!farSide) clipEdge(p, q, e); else if (beyond === 'all' && p !== q) out.edges.push(p, q);
+        }
       };
 
       for (let t = 0; t < M.tets.length / 4; t++) { const c = M.tetCtr[t]; clipTet(base + M.tets[t * 4], base + M.tets[t * 4 + 1], base + M.tets[t * 4 + 2], base + M.tets[t * 4 + 3], M.tetCol.slice(t * 3, t * 3 + 3), c >= 0 ? base + c : -1, 0); }
@@ -656,7 +678,7 @@
       // the result so far: outside shape k (add, subtract) or inside it (intersect)
       const F = prefix(k), Fk = prefix(k + 1);
       if (!dk) { if (op !== 'intersect') copyInto(cur, next); }
-      else clipPass(cur, next, op === 'intersect' ? dk : (p0, p1, p2, p3, W) => -dk(p0, p1, p2, p3, W), items[k].field.lip, Sk, Fk, true);
+      else clipPass(cur, next, op === 'intersect' ? dk : (p0, p1, p2, p3, W) => -dk(p0, p1, p2, p3, W), items[k].field.lip, Sk, Fk, true, items[k].field.convex ? (op === 'intersect' ? 'none' : 'all') : null);
       // shape k: outside the result so far (add) or inside it (subtract, intersect)
       const solidSoFar = wf.slice(0, k).some(Boolean);
       if (!solidSoFar) { if (op === 'add') copyInto(Sk, next); }
