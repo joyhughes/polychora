@@ -5,7 +5,7 @@
 // Nothing is meshed, so shapes can move every frame.
 (function (root) {
   const P = root.Polychora, O = root.Objects, CSG = root.CSG;
-  const T_CONVEX = 1, T_STAR = 2, T_FRAC = 3, T_TORUS = 4, T_HOPF = 5, T_MTN = 6;
+  const T_CONVEX = 1, T_STAR = 2, T_FRAC = 3, T_TORUS = 4, T_HOPF = 5, T_MTN = 6, T_TREE = 7;
   const MAXS = 8, TEXW = 2048;
   const DEG = Math.PI / 180;
 
@@ -88,8 +88,17 @@
     return { type: T_MTN, texels: tx, c1: hf.N, c2: 0, prm: [hf.N, hf.a, hf.B, hf.top] };
   }
 
+  // tree: eight texels per branch (depth first): base, axis, the three frame vectors, [length, base radius, tip
+  // radius, index past its subtree], subtree ball centre, [subtree radius, branch radius, leaf size, level]
+  function treeData(prm) {
+    const { br, depth } = O.treeData(prm), tx = [];
+    for (const b of br) tx.push(b.base, b.a, b.e[0], b.e[1], b.e[2], [b.L, b.r0, b.r1, b.skip], b.sc, [b.sR, b.R, b.leaf, b.level]);
+    return { type: T_TREE, texels: tx, c1: br.length, c2: 0, prm: [depth, 0, 0, 0] };
+  }
+
   function shapeData(o, prm, time) {
     if (o.kind === 'mtn') return mountainData(prm);
+    if (o.kind === 'tree') return treeData(prm);
     if (o.kind === 'poly') return polytopeData(o.id);
     if (o.kind === 'frac') return fractalData(o.id, prm);
     if (o.kind === 'hopf') return hopfData(prm, time);
@@ -339,6 +348,46 @@
     }
     if (inside) addS(tin, hi, ivec2(k << 24 | ein, 0), ivec2(k << 24 | ihi, 0));
   }
+  // tree: the icosahedron's face normals; endpoint ids are branch · 40 + piece (0–19 sides, 20 base, 21 tip, 22–37 leaf)
+  const vec3 ICO[20] = vec3[20](${O.ICOSA.normals.map(n => `vec3(${n.map(x => x.toFixed(9)).join(', ')})`).join(', ')});
+  bool hitBall(vec4 c, float R, vec4 Y0, vec4 Yd) {
+    vec4 d = Y0 - c; float A = dot(Yd, Yd), B = dot(d, Yd), C = dot(d, d) - R * R;
+    return B * B - A * C > 0.0;
+  }
+  void treeIv(int k, vec4 Y0, vec4 Yd) {
+    int off = uOff[k], n = uC1[k], i = 0;
+    for (int guard = 0; guard < 20000; guard++) {
+      if (i >= n) break;
+      int b = off + 8 * i;
+      vec4 P = tex(b + 5), q = tex(b + 7);
+      if (!hitBall(tex(b + 6), q.x, Y0, Yd)) { i = int(P.w); continue; }
+      vec4 base = tex(b), a = tex(b + 1);
+      if (hitBall(base + 0.5 * P.x * a, q.y, Y0, Yd)) {
+        vec4 e1 = tex(b + 2), e2 = tex(b + 3), e3 = tex(b + 4);
+        float lo = -1e9, hi = 1e9; int ilo = 0, ihi = 0, id = i * 40;
+        float ab = dot(a, base), kap = (P.z - P.y) / P.x;
+        bool ok = clip(-a, -ab, Y0, Yd, id + 20, lo, hi, ilo, ihi) && clip(a, ab + P.x, Y0, Yd, id + 21, lo, hi, ilo, ihi);
+        for (int f = 0; f < 20; f++) {
+          if (!ok) break;
+          vec4 nn = ICO[f].x * e1 + ICO[f].y * e2 + ICO[f].z * e3 - kap * a;
+          ok = clip(nn, P.y + dot(nn, base), Y0, Yd, id + f, lo, hi, ilo, ihi);
+        }
+        if (ok) addS(lo, hi, ivec2(k << 24 | ilo, 0), ivec2(k << 24 | ihi, 0));
+      }
+      if (q.z > 0.0) {
+        vec4 c = base + P.x * a;
+        if (hitBall(c, q.z, Y0, Yd)) {
+          float lo = -1e9, hi = 1e9; int ilo = 0, ihi = 0; bool ok = true;
+          for (int m = 0; m < 16; m++) {
+            vec4 sg = vec4((m & 1) != 0 ? -1.0 : 1.0, (m & 2) != 0 ? -1.0 : 1.0, (m & 4) != 0 ? -1.0 : 1.0, (m & 8) != 0 ? -1.0 : 1.0);
+            if (!clip(sg, dot(sg, c) + q.z, Y0, Yd, i * 40 + 22 + m, lo, hi, ilo, ihi)) { ok = false; break; }
+          }
+          if (ok) addS(lo, hi, ivec2(k << 24 | ilo, 0), ivec2(k << 24 | ihi, 0));
+        }
+      }
+      i++;
+    }
+  }
   vec3 terrainColor(int k, float y, float slope) {
     float sea = tex(uOff[k] + 1).x, snow = tex(uOff[k] + 1).y, top = uPrm[k].w;
     if (y <= sea + 2e-4) return vec3(0.17, 0.4, 0.66);
@@ -379,6 +428,15 @@
         float th = atan(y.y, y.x), ph = atan(y.w, y.z);
         own = vec4(hsl(fract(th / 6.2831853 + 1.0), 0.6, mod(floor(fract(ph / 6.2831853 + 1.0) * 8.0), 2.0) > 0.5 ? 0.6 : 0.44), 1.0);
       }
+    } else if (ty == ${T_TREE}) {
+      int i = idx / 40, f = idx - 40 * i, b = uOff[k] + 8 * i;
+      vec4 a = tex(b + 1), P = tex(b + 5);
+      if (f < 20) nl = ICO[f].x * tex(b + 2) + ICO[f].y * tex(b + 3) + ICO[f].z * tex(b + 4) - (P.z - P.y) / P.x * a;
+      else if (f == 20) nl = -a;
+      else if (f == 21) nl = a;
+      else { int m = f - 22; nl = vec4((m & 1) != 0 ? -1.0 : 1.0, (m & 2) != 0 ? -1.0 : 1.0, (m & 4) != 0 ? -1.0 : 1.0, (m & 8) != 0 ? -1.0 : 1.0); }
+      if (f < 22) { float t = tex(b + 7).w / max(1.0, uPrm[k].x); own = vec4(0.34 + 0.16 * t, 0.24 + 0.2 * t, 0.16 + 0.06 * t, 1.0); }
+      else own = vec4(hsl(0.24 + 0.1 * fract(float(i) * 0.6180339), 0.55, 0.36 + 0.12 * fract(float(i) * 0.381966)), 1.0);
     } else if (ty == ${T_MTN}) {
       int N = int(uPrm[k].x); float sc = float(N) / (2.0 * uPrm[k].y);
       if (idx >= MB) {
@@ -435,6 +493,7 @@
       else if (ty == ${T_STAR}) starIv(k, Y0s[k], Yds[k]);
       else if (ty == ${T_FRAC}) fracIv(k, Y0s[k], Yds[k]);
       else if (ty == ${T_MTN}) mtnIv(k, Y0s[k], Yds[k]);
+      else if (ty == ${T_TREE}) treeIv(k, Y0s[k], Yds[k]);
       else tubeIv(k, Y0s[k], Yds[k]);
       combine(k == 0 ? 0 : uOp[k]);
     }

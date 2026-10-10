@@ -11,7 +11,8 @@
   OBJECTS.push({ key: 'clifford', label: 'Clifford torus', group: 'Surfaces & fibrations in S³', kind: 'clifford', s3: true });
   OBJECTS.push({ key: 'hopf', label: 'Hopf fibration', group: 'Surfaces & fibrations in S³', kind: 'hopf', s3: true });
   for (const [k, F] of Object.entries(O.FRACTALS)) OBJECTS.push({ key: 'frac:' + k, label: F.name, group: 'Sierpinski fractals', kind: 'frac', id: k });
-  OBJECTS.push({ key: 'mountain', label: 'Fractal mountain', group: 'Fractal landscapes', kind: 'mtn' });
+  OBJECTS.push({ key: 'mountain', label: 'Fractal mountain', group: 'Fractal nature', kind: 'mtn' });
+  OBJECTS.push({ key: 'tree', label: 'Fractal tree', group: 'Fractal nature', kind: 'tree' });
 
   const rings = p => p.pattern === 'rings';
   function paramDefs(o) {
@@ -47,6 +48,18 @@
       { id: 'height', label: 'Height', min: 0.3, max: 1.3, step: 0.01, def: 0.85, fmt: 2 },
       { id: 'sea', label: 'Sea level', min: -0.48, max: 0.4, step: 0.01, def: -0.25, fmt: 2 },
       { id: 'snow', label: 'Snow line', min: 0.3, max: 1, step: 0.01, def: 0.72, fmt: 2, title: 'Share of the way from sea level to the summit' },
+    ];
+    if (o.kind === 'tree') return [
+      { id: 'forks', label: 'Forks', min: 2, max: 4, step: 1, def: 4, title: 'Branches at each fork: toward the corners of a segment, triangle or tetrahedron' },
+      { id: 'depth', label: 'Depth', min: 1, max: 6, step: 1, def: 4 },
+      { id: 'spread', label: 'Spread', min: 10, max: 80, step: 1, def: 35, unit: '°' },
+      { id: 'ratio', label: 'Length ratio', min: 0.45, max: 0.85, step: 0.01, def: 0.66, fmt: 2 },
+      { id: 'twist', label: 'Twist', min: 0, max: 120, step: 1, def: 40, unit: '°', title: 'Turns each fork about the diagonal of the 3-space across the branch, so later forks reach into w' },
+      { id: 'thick', label: 'Thickness', min: 0.03, max: 0.2, step: 0.005, def: 0.09, fmt: 3 },
+      { id: 'wild', label: 'Wildness', min: 0, max: 1, step: 0.01, def: 0.12, fmt: 2, title: 'Random changes to each branch’s angle, length and turn' },
+      { id: 'seed', label: 'Seed', min: 1, max: 200, step: 1, def: 3, show: p => p.wild > 0 },
+      { id: 'leaves', label: 'Leaves', type: 'check', def: true },
+      { id: 'leafSize', label: 'Leaf size', min: 0.03, max: 0.3, step: 0.005, def: 0.09, fmt: 3, show: p => p.leaves },
     ];
     const F = O.FRACTALS[o.id];
     const defs = [{ id: 'depth', label: 'Depth', min: 0, max: F.maxDepth, step: 1, def: F.depth }];
@@ -189,7 +202,7 @@
   const nextTint = () => TINT_NAMES[1 + (scene.shapes.length - 1) % (TINT_NAMES.length - 1)][0];
   $('addShape').onclick = () => {
     // a tesseract cutting into the current shape is the quickest way to see what subtraction does
-    const solid = scene.shapes.some(sh => ['poly', 'frac', 'mtn'].includes(objOf(sh.key).kind));
+    const solid = scene.shapes.some(sh => ['poly', 'frac', 'mtn', 'tree'].includes(objOf(sh.key).kind));
     scene.shapes.push(newShape('poly:tesseract', { op: solid ? 'subtract' : 'add', tint: nextTint(), place: newPlace() }));
     selectShape(scene.shapes.length - 1); dirty = true;
   };
@@ -439,7 +452,7 @@
   function initialPose() {
     const M = ident4();
     if (cur().s3) { rotWorld(M, 1, 2, 0.5); return M; } // keep the torus axes readable in stereographic view
-    if (cur().kind === 'mtn') { rotWorld(M, 0, 2, 0.5); return M; } // up stays up, and slices start straight across w
+    if (cur().kind === 'mtn' || cur().kind === 'tree') { rotWorld(M, 0, 2, 0.5); return M; } // up stays up, and slices start straight across w
     rotWorld(M, 0, 3, 0.31); rotWorld(M, 1, 2, 0.23); rotWorld(M, 2, 3, 0.17); rotWorld(M, 0, 1, 0.11); return M;
   }
   let R = ident4(), T = [0, 0, 0, 0];
@@ -481,8 +494,10 @@
       else { if (state.p4 === 'stereo') state.p4 = 'persp'; state.dist = 3.7; }
       if (o.kind === 'hopf') state.col = 'flat'; // fibres coloured by their point on S²
       // the mountain keeps its own colours and keeps y up: it turns about the vertical and through w
-      if (o.kind === 'mtn') { state.col = 'flat'; state.spin = [0, 0.15, 0, 0, 0, 0]; state.dist = 4.3; state.pitch = 0.5; }
-      else if (was && was.kind === 'mtn') { state.col = 'depth'; state.spin = [0, 0, 0.12, 0.3, 0, 0.18]; state.pitch = -0.35; }
+      // a slice of the tree only meets the branches that cross it, so it opens in projection to show the whole tree
+      if (o.kind === 'tree') { state.col = 'flat'; if (state.renderer !== 'gpu') state.mode = 'proj'; state.spin = [0, 0.15, 0, 0, 0, 0]; state.dist = 3.9; state.pitch = 0.25; }
+      else if (o.kind === 'mtn') { state.col = 'flat'; state.mode = 'slice'; state.spin = [0, 0.15, 0, 0, 0, 0]; state.dist = 4.3; state.pitch = 0.5; }
+      else if (was && (was.kind === 'mtn' || was.kind === 'tree')) { state.col = 'depth'; state.spin = [0, 0, 0.12, 0.3, 0, 0.18]; state.pitch = -0.35; }
       R = initialPose(); T = [0, 0, 0, 0];
     }
     buildParamUI(); buildShapeList(); showInfo(); dirty = true; syncUI();
@@ -540,7 +555,7 @@
   }
   function placeholderInfo(o) {
     const c = o.kind === 'poly' && P.CATALOG.find(c => c.id === o.id);
-    const labels = o.kind === 'poly' ? ['cells', 'faces', 'edges', 'verts'] : o.kind === 'frac' ? ['copies', 'cells', 'faces', 'verts'] : o.kind === 'hopf' ? ['fibres', 'rings', 'segs', 'tori'] : o.kind === 'mtn' ? ['grid', 'summit', 'tets', 'verts'] : ['grid', 'tris', 'tets', 'curves'];
+    const labels = o.kind === 'poly' ? ['cells', 'faces', 'edges', 'verts'] : o.kind === 'frac' ? ['copies', 'cells', 'faces', 'verts'] : o.kind === 'hopf' ? ['fibres', 'rings', 'segs', 'tori'] : o.kind === 'mtn' ? ['grid', 'summit', 'tets', 'verts'] : o.kind === 'tree' ? ['branches', 'leaves', 'tets', 'verts'] : ['grid', 'tris', 'tets', 'curves'];
     return { name: shortName(o), sub: c ? c.sym : '', counts: labels.map(l => [l, '…']), rows: [] };
   }
   // the spinner beside the symbol while a build is pending (after a short delay, so quick ones do not flicker)

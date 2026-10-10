@@ -9,6 +9,7 @@
     if (d.kind === 'clifford') return O.clifford(d.prm);
     if (d.kind === 'hopf') return O.hopf(d.prm, hopfTime);
     if (d.kind === 'mtn') return O.mountain(d.prm);
+    if (d.kind === 'tree') return O.tree(d.prm);
     return O.fractal(d.id, d.prm);
   }
 

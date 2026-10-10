@@ -4,6 +4,7 @@
 //   star polytopes    |p| − r(p/|p|): the solid is everything the boundary hides from the centre
 //   fractals          the IFS applied to the base polytope's field
 //   mountain          the height above the ground, against the floor and the sides of the ground
+//   tree              the least over its branches (tapered icosahedral prisms) and leaves (16-cells)
 // Every boundary is made of flat pieces, so each field can also report the hyperplane it is resting on.
 // Surfaces and curves (Clifford torus, Hopf fibres) have no inside: they are clipped but cut nothing.
 //
@@ -174,6 +175,59 @@
     };
   }
 
+  // The tree: the least over its branches (each the most of its 22 plane values) and leaves (16-cells). A subtree whose
+  // bounding ball is far enough away is skipped: every element E inside a ball (c, R) has f_E(p) ≥ γ|p − c| − R,
+  // where γ is the smallest, over directions u, of the largest n·u over E's plane normals.
+  function treeField(prm) {
+    const { br } = Obj.treeData(prm), I = Obj.ICOSA, nb = br.length, PL = new Float64Array(nb * 22 * 5);
+    let gamma = 0.5; // a 16-cell's normals (±½, ±½, ±½, ±½) give at least ½ in every direction
+    br.forEach((b, i) => {
+      const kap = (b.r1 - b.r0) / b.L, nl = Math.sqrt(1 + kap * kap), o = i * 110;
+      I.normals.forEach((m, f) => {
+        const n = [0, 1, 2, 3].map(q => (m[0] * b.e[0][q] + m[1] * b.e[1][q] + m[2] * b.e[2][q] - kap * b.a[q]) / nl);
+        for (let q = 0; q < 4; q++) PL[o + f * 5 + q] = n[q];
+        PL[o + f * 5 + 4] = b.r0 / nl + n[0] * b.base[0] + n[1] * b.base[1] + n[2] * b.base[2] + n[3] * b.base[3];
+      });
+      const ab = b.a[0] * b.base[0] + b.a[1] * b.base[1] + b.a[2] * b.base[2] + b.a[3] * b.base[3];
+      for (let q = 0; q < 4; q++) { PL[o + 100 + q] = -b.a[q]; PL[o + 105 + q] = b.a[q]; }
+      PL[o + 104] = -ab; PL[o + 109] = ab + b.L;
+      // γ for this branch: directions u = cos t·a + sin t·v; the sides give at least (inr·sin t − κ cos t)/√(1 + κ²)
+      let g = Infinity;
+      for (let s = 0; s <= 2000; s++) { const t = Math.PI * s / 2000; g = Math.min(g, Math.max(Math.abs(Math.cos(t)), (I.inr * Math.sin(t) - kap * Math.cos(t)) / nl)); }
+      gamma = Math.min(gamma, g);
+    });
+    gamma *= 0.999;
+    let bi = 0, bp = 0;
+    return (x0, x1, x2, x3, P) => {
+      let best = Infinity;
+      for (let i = 0; i < nb;) {
+        const b = br[i], c = b.sc;
+        if (gamma * Math.hypot(x0 - c[0], x1 - c[1], x2 - c[2], x3 - c[3]) - b.sR >= best) { i = b.skip; continue; }
+        const d = b.c;
+        if (gamma * Math.hypot(x0 - d[0], x1 - d[1], x2 - d[2], x3 - d[3]) - b.R < best) {
+          let v = -Infinity, vf = 0;
+          for (let f = 0, o = i * 110; f < 22; f++, o += 5) { const u = PL[o] * x0 + PL[o + 1] * x1 + PL[o + 2] * x2 + PL[o + 3] * x3 - PL[o + 4]; if (u > v) { v = u; vf = f; } }
+          if (v < best) { best = v; bi = i; bp = vf; }
+          if (b.leaf) {
+            const t0 = b.base[0] + b.L * b.a[0], t1 = b.base[1] + b.L * b.a[1], t2 = b.base[2] + b.L * b.a[2], t3 = b.base[3] + b.L * b.a[3];
+            const u = (Math.abs(x0 - t0) + Math.abs(x1 - t1) + Math.abs(x2 - t2) + Math.abs(x3 - t3) - b.leaf) / 2;
+            if (u < best) { best = u; bi = i; bp = 22 + (x0 < t0 ? 1 : 0) + (x1 < t1 ? 2 : 0) + (x2 < t2 ? 4 : 0) + (x3 < t3 ? 8 : 0); }
+          }
+        }
+        i++;
+      }
+      if (P) {
+        if (bp < 22) { const o = bi * 110 + bp * 5; for (let q = 0; q < 5; q++) P[q] = PL[o + q]; }
+        else {
+          const b = br[bi], m = bp - 22; let h = 0;
+          for (let q = 0; q < 4; q++) { P[q] = m >> q & 1 ? -0.5 : 0.5; h += P[q] * (b.base[q] + b.L * b.a[q]); }
+          P[4] = h + b.leaf / 2;
+        }
+      }
+      return best;
+    };
+  }
+
   // { f, lip }: lip is how far the field can understate the distance to its boundary (subdivision safety)
   function field(o, prm) {
     if (o.kind === 'poly') {
@@ -182,6 +236,7 @@
     }
     if (o.kind === 'frac') return { f: fractalField(o.id, prm), lip: 1 };
     if (o.kind === 'mtn') return { f: mountainField(prm), lip: 1 };
+    if (o.kind === 'tree') return { f: treeField(prm), lip: 1 };
     return null;
   }
 

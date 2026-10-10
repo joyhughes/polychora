@@ -8,6 +8,7 @@ Interactive WebGL2 viewer for 4D objects:
 - **Hopf fibration**: fibres over latitude rings, a Fibonacci spread over S², or one tilted great circle; ring count, latitude, spread, phase, animated flow, tube radius, and optional Hopf tori
 - **Sierpinski fractals**: pentatope, 16-cell, Cantor tesseract, Menger tesseract and Vicsek tesseract, with fractal depth and (where it applies) the scale ratio; the similarity dimension is shown live
 - **Fractal mountain**: a 4D landscape, the solid under a height y = h(x, z, w) over a cube of ground, grown by diamond–square on a 3D grid; seed, detail, roughness, height, sea level and snow line. Each slice across w is an ordinary 3D mountain, and sweeping the slice moves through the range
+- **Fractal tree**: each branch, a tapered 4D prism over an icosahedron, forks into 2–4 shorter copies tilted toward the corners of a segment, triangle or tetrahedron in the 3-space across it, twisting into w at each level, with 16-cell leaves; forks, depth, spread, length ratio, twist, thickness, wildness and leaves
 
 **Combine them:** stack any number of shapes, each with its own type, parameters, 4D placement (offset, scale, rotation in all six planes) and colour, and add, subtract or intersect them in 4D.
 
@@ -43,6 +44,7 @@ Slices are exact: each cell is decomposed into tetrahedra (cell centre + fan tri
 - **Star polytopes:** by clipping against the cones from the centre over each cell's fan tetrahedra, culled by the cone over the cell's convex hull.
 - **Fractals:** by walking the map tree, pruning by each copy's bounding polytope.
 - **Fractal mountain:** by walking the grid cubes under the ray's shadow on the ground; the height is linear on each cube's six Kuhn tetrahedra, so each piece of the ray meets the surface exactly once at most.
+- **Fractal tree:** by clipping against each branch's 22 half-spaces and each leaf's 16, skipping any subtree whose bounding ball the ray misses.
 - **Clifford torus and Hopf fibres:** by marching their distance fields as thin solid tubes.
 
 The interval lists are combined from the top down, and the surfaces where the result starts and stops are shaded (all of them, front to back, when translucent).

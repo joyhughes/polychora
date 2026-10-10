@@ -399,6 +399,120 @@
     });
   }
 
-  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, hsl, mountain, mountainHeights, KUHN };
+  // ---------------- fractal tree ----------------
+  // Each branch is a tapered prism over an icosahedron, lying along its own axis a with the icosahedron in the 3-space
+  // across it (frame e1, e2, e3). It forks into k shorter, thinner copies tilted by the spread angle toward the corners
+  // of a segment, triangle or tetrahedron in that 3-space; each level turns those corners about the frame's diagonal
+  // (the twist), so the branches reach into all four dimensions. Tips carry small 16-cells as leaves.
+  const PHI = (1 + Math.sqrt(5)) / 2;
+  const ICOSA = (() => {
+    const v = [];
+    for (const a of [-1, 1]) for (const b of [-PHI, PHI]) v.push([0, a, b], [a, b, 0], [b, 0, a]);
+    const n = v.map(p => { const l = Math.hypot(...p); return p.map(x => x / l); }), faces = [];
+    const d2 = (i, j) => (v[i][0] - v[j][0]) ** 2 + (v[i][1] - v[j][1]) ** 2 + (v[i][2] - v[j][2]) ** 2;
+    for (let i = 0; i < 12; i++) for (let j = i + 1; j < 12; j++) for (let k = j + 1; k < 12; k++) if (Math.abs(d2(i, j) - 4) < 1e-9 && Math.abs(d2(j, k) - 4) < 1e-9 && Math.abs(d2(i, k) - 4) < 1e-9) faces.push([i, j, k]);
+    const normals = faces.map(f => { const c = [0, 1, 2].map(q => n[f[0]][q] + n[f[1]][q] + n[f[2]][q]), l = Math.hypot(...c); return c.map(x => x / l); });
+    const inr = Math.hypot(...[0, 1, 2].map(q => (n[faces[0][0]][q] + n[faces[0][1]][q] + n[faces[0][2]][q]) / 3)); // inradius of the unit-circumradius icosahedron
+    const edges = [];
+    for (let i = 0; i < 12; i++) for (let j = i + 1; j < 12; j++) if (Math.abs(d2(i, j) - 4) < 1e-9) edges.push([i, j]);
+    return { verts: n, faces, normals, edges, inr };
+  })();
+  const FORKS = {
+    2: [[1, 0, 0], [-1, 0, 0]],
+    3: [0, 1, 2].map(j => [Math.cos(2 * Math.PI * j / 3), Math.sin(2 * Math.PI * j / 3), 0]),
+    // a tetrahedron with two corners in the e1–e2 plane, so the first fork has two branches in the slice w = 0
+    4: [[1, Math.SQRT2, 0], [1, -Math.SQRT2, 0], [-1, 0, Math.SQRT2], [-1, 0, -Math.SQRT2]].map(p => p.map(x => x / Math.sqrt(3))),
+  };
+  let treeKey = '', treeVal = null;
+  function treeData(prm) {
+    const key = JSON.stringify(prm);
+    if (key === treeKey) return treeVal;
+    let seed = (prm.seed * 2654435761) >>> 0;
+    const rnd = () => { seed = (seed + 0x6D2B79F5) >>> 0; let t = seed; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return (((t ^ (t >>> 14)) >>> 0) / 4294967296) * 2 - 1; };
+    const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2] + u[3] * v[3];
+    const add = (u, v, s = 1) => u.map((x, i) => x + s * v[i]);
+    // rotation by th in the plane of orthonormal a and b
+    const rot = (x, a, b, th) => { const xa = dot(x, a), xb = dot(x, b), c = Math.cos(th) - 1, s = Math.sin(th); return x.map((v, i) => v + c * (xa * a[i] + xb * b[i]) + s * (xa * b[i] - xb * a[i])); };
+    // a 3D rotation of the fork corners about the diagonal (1,1,1)
+    const twist3 = (p, th) => { const u = 1 / Math.sqrt(3), c = Math.cos(th), s = Math.sin(th), d = (p[0] + p[1] + p[2]) * u * (1 - c);
+      return [p[0] * c + s * u * (p[2] - p[1]) + d * u, p[1] * c + s * u * (p[0] - p[2]) + d * u, p[2] * c + s * u * (p[1] - p[0]) + d * u]; };
+    const K = prm.forks, corners = FORKS[K], spread = prm.spread * DEG, tw = prm.twist * DEG, wild = prm.wild, shrinkR = Math.pow(K, -1 / 3);
+    const br = [];
+    const grow = (base, a, e, L, r0, level) => {
+      const r1 = r0 * 0.8, tip = add(base, a, L), b = { base, a, e, L, r0, r1, level, leaf: level === prm.depth && prm.leaves ? prm.leafSize : 0 };
+      br.push(b);
+      if (level < prm.depth) {
+        const turn = tw * level + wild * Math.PI * rnd();
+        for (const c0 of corners) {
+          const c = twist3(c0, turn), sdir = e[0].map((_, i) => c[0] * e[0][i] + c[1] * e[1][i] + c[2] * e[2][i]);
+          const sl = Math.hypot(...sdir), s1 = sdir.map(x => x / sl), th = spread * (1 + 0.5 * wild * rnd());
+          const a2 = rot(a, a, s1, th), e2 = e.map(x => rot(x, a, s1, th));
+          grow(tip, a2, e2, L * prm.ratio * (1 + 0.35 * wild * rnd()), r1 * shrinkR, level + 1);
+        }
+      }
+      b.skip = br.length;
+    };
+    grow([0, 0, 0, 0], [0, 1, 0, 0], [[1, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], 1, prm.thick, 0);
+    // fit the tree into a ball of radius 1.15 about the origin
+    const lo = [Infinity, Infinity, Infinity, Infinity], hi = lo.map(() => -Infinity);
+    for (const b of br) for (const p of [b.base, add(b.base, b.a, b.L)]) for (let i = 0; i < 4; i++) { lo[i] = Math.min(lo[i], p[i]); hi[i] = Math.max(hi[i], p[i]); }
+    const mid = lo.map((x, i) => (x + hi[i]) / 2);
+    let R = 0; for (const b of br) for (const p of [b.base, add(b.base, b.a, b.L)]) R = Math.max(R, Math.hypot(...p.map((x, i) => x - mid[i])));
+    const sc = 1.15 / R;
+    for (const b of br) { b.base = b.base.map((x, i) => (x - mid[i]) * sc); b.L *= sc; b.r0 *= sc; b.r1 *= sc; b.leaf *= sc; }
+    // bounding balls of each branch and of each subtree (branches are stored depth first, so a subtree is br[i .. skip))
+    const cr = 1 / ICOSA.inr;
+    for (const b of br) { b.c = add(b.base, b.a, b.L / 2); b.R = Math.hypot(b.L / 2, b.r0 * cr); if (b.leaf) { const t = add(b.base, b.a, b.L); b.R = Math.max(b.R, Math.hypot(...t.map((x, i) => x - b.c[i])) + b.leaf); } }
+    for (let i = br.length - 1; i >= 0; i--) {
+      const b = br[i], lo2 = b.c.map(x => x), hi2 = b.c.map(x => x);
+      for (let j = i; j < b.skip; j++) for (let q = 0; q < 4; q++) { lo2[q] = Math.min(lo2[q], br[j].c[q] - br[j].R); hi2[q] = Math.max(hi2[q], br[j].c[q] + br[j].R); }
+      b.sc = lo2.map((x, q) => (x + hi2[q]) / 2);
+      b.sR = 0; for (let j = i; j < b.skip; j++) b.sR = Math.max(b.sR, Math.hypot(...br[j].c.map((x, q) => x - b.sc[q])) + br[j].R);
+    }
+    treeKey = key; treeVal = { br, depth: prm.depth };
+    return treeVal;
+  }
+
+  function tree(prm) {
+    const T = treeData(prm), M = new Mesh(), cr = 1 / ICOSA.inr, I = ICOSA;
+    const bark = lv => { const t = lv / Math.max(1, T.depth); return [0.34 + 0.16 * t, 0.24 + 0.2 * t, 0.16 + 0.06 * t]; };
+    let leaves = 0;
+    T.br.forEach((b, bi) => {
+      const tip = b.base.map((x, i) => x + b.L * b.a[i]);
+      const ring = (o, r) => I.verts.map(v => M.pt(o.map((x, i) => x + r * cr * (v[0] * b.e[0][i] + v[1] * b.e[1][i] + v[2] * b.e[2][i]))));
+      const B = ring(b.base, b.r0), Tp = ring(tip, b.r1), cb = M.pt(b.base), ct = M.pt(tip), col = bark(b.level);
+      for (const [i, j, k] of I.faces) {
+        M.tet(B[i], B[j], B[k], Tp[i], col); M.tet(B[j], B[k], Tp[i], Tp[j], col); M.tet(B[k], Tp[i], Tp[j], Tp[k], col);
+        M.tet(cb, B[i], B[j], B[k], col); M.tet(ct, Tp[i], Tp[j], Tp[k], col);
+        M.tri(B[i], B[j], B[k], col); M.tri(Tp[i], Tp[j], Tp[k], col);
+      }
+      for (const [i, j] of I.edges) { M.tri(B[i], B[j], Tp[j], col); M.tri(B[i], Tp[j], Tp[i], col); M.edge(B[i], B[j]); M.edge(Tp[i], Tp[j]); }
+      for (let i = 0; i < 12; i++) M.edge(B[i], Tp[i]);
+      if (b.leaf) {
+        // a 16-cell: the points within leaf size of the tip in the sum of |coordinates|
+        leaves++;
+        const lc = hsl(0.24 + 0.1 * ((bi * 0.6180339) % 1), 0.55, 0.36 + 0.12 * ((bi * 0.381966) % 1));
+        const V = [];
+        for (let q = 0; q < 4; q++) for (const sg of [1, -1]) { const p = tip.slice(); p[q] += sg * b.leaf; V.push(M.pt(p)); }
+        const vx = (q, sg) => V[q * 2 + (sg > 0 ? 0 : 1)];
+        for (let m = 0; m < 16; m++) { const sg = [0, 1, 2, 3].map(q => (m >> q & 1 ? -1 : 1)); M.tet(vx(0, sg[0]), vx(1, sg[1]), vx(2, sg[2]), vx(3, sg[3]), lc); }
+        for (let q = 0; q < 4; q++) for (let r = q + 1; r < 4; r++) for (const s1 of [1, -1]) for (const s2 of [1, -1]) M.edge(vx(q, s1), vx(r, s2));
+        for (let m = 0; m < 32; m++) { const skip = m & 3, sg = [0, 1, 2].map(q => (m >> (q + 2) & 1 ? -1 : 1)), ax = [0, 1, 2, 3].filter(q => q !== skip); M.tri(vx(ax[0], sg[0]), vx(ax[1], sg[1]), vx(ax[2], sg[2]), lc); }
+      }
+    });
+    const K = prm.forks, dim = Math.log(K) / Math.log(1 / prm.ratio);
+    const rows = [
+      ['Rule', `each branch forks into ${K} copies ${Math.round(100 * prm.ratio)}% as long, tilted ${prm.spread}° toward the corners of a ${K === 2 ? 'segment' : K === 3 ? 'triangle' : 'tetrahedron'} in the 3-space across it`],
+      ['Thickness', `each child keeps 1/${K} of its parent's 3D cross-section (Leonardo's rule in 4D)`],
+      ['Dimension', `tips: log ${K} / log ${(1 / prm.ratio).toFixed(3)} = ${dim.toFixed(3)}`],
+      ['Branch', 'a tapered 4D prism over an icosahedron'],
+      ['Slices', 'a slice cuts the trunk and whichever branches cross it; sweeping it finds the others'],
+    ];
+    return M.done({
+      info: { name: 'Fractal tree', sub: `${K}-way forks, depth ${prm.depth}, seed ${prm.seed}`, counts: [['branches', T.br.length], ['leaves', leaves], ['tets', M.tets.length / 4], ['verts', M.pts.length / 4]], rows },
+    });
+  }
+
+  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA };
   if (typeof module !== 'undefined') module.exports = root.Objects;
 })(typeof window !== 'undefined' ? window : globalThis);
