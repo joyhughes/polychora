@@ -3,6 +3,7 @@
 //   convex polytopes  max over cells of (n·p − h)
 //   star polytopes    |p| − r(p/|p|): the solid is everything the boundary hides from the centre
 //   fractals          the IFS applied to the base polytope's field
+//   mountain          the height above the ground, against the floor and the sides of the ground
 // Every boundary is made of flat pieces, so each field can also report the hyperplane it is resting on.
 // Surfaces and curves (Clifford torus, Hopf fibres) have no inside: they are clipped but cut nothing.
 //
@@ -140,6 +141,39 @@
     return (x0, x1, x2, x3, P) => f(x0, x1, x2, x3, depth, P);
   }
 
+  // The mountain: the most of (y − h) / S over the ground, the floor and the four sides of the ground cube, where
+  // S = √(1 + steepest slope²) keeps the field from overstating the distance. h is linear on each Kuhn tetrahedron.
+  function mountainField(prm) {
+    const { N, a, B, H } = Obj.mountainHeights(prm), n1 = N + 1, sc = N / (2 * a), K = Obj.KUHN;
+    let G = 0;
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) for (let k = 0; k < N; k++) for (const p of K) {
+      const v = [i, j, k]; let prev = H[(i * n1 + j) * n1 + k], g2 = 0;
+      for (const q of p) { v[q]++; const h = H[(v[0] * n1 + v[1]) * n1 + v[2]]; g2 += ((h - prev) * sc) ** 2; prev = h; }
+      G = Math.max(G, g2);
+    }
+    const S = Math.sqrt(1 + G), f = [0, 0, 0], u = [0, 0, 0], c = [0, 0, 0], d = [0, 0, 0];
+    return (x0, x1, x2, x3, P) => {
+      u[0] = Math.max(-a, Math.min(a, x0)); u[1] = Math.max(-a, Math.min(a, x2)); u[2] = Math.max(-a, Math.min(a, x3));
+      for (let r = 0; r < 3; r++) { const g = (u[r] + a) * sc; c[r] = Math.min(N - 1, Math.floor(g)); f[r] = g - c[r]; }
+      const p = f[0] >= f[1] ? (f[1] >= f[2] ? K[0] : f[0] >= f[2] ? K[1] : K[4]) : (f[0] >= f[2] ? K[2] : f[1] >= f[2] ? K[3] : K[5]);
+      let h = H[(c[0] * n1 + c[1]) * n1 + c[2]], hh = h;
+      for (const q of p) { c[q]++; const v = H[(c[0] * n1 + c[1]) * n1 + c[2]]; d[q] = v - hh; h += f[q] * (v - hh); hh = v; }
+      let best = (x1 - h) / S, k = -1;
+      const sides = [-B - x1, Math.abs(x0) - a, Math.abs(x2) - a, Math.abs(x3) - a];
+      for (let r = 0; r < 4; r++) if (sides[r] > best) { best = sides[r]; k = r; }
+      if (P) {
+        P[0] = P[1] = P[2] = P[3] = 0;
+        if (k < 0) {
+          // this tetrahedron's hyperplane y − g·u = h − g·u
+          const g0 = d[0] * sc, g1 = d[1] * sc, g2 = d[2] * sc, L = Math.sqrt(1 + g0 * g0 + g1 * g1 + g2 * g2);
+          P[0] = -g0 / L; P[1] = 1 / L; P[2] = -g1 / L; P[3] = -g2 / L; P[4] = (h - g0 * u[0] - g1 * u[1] - g2 * u[2]) / L;
+        } else if (k === 0) { P[1] = -1; P[4] = B; }
+        else { const ax = [0, 2, 3][k - 1], x = [x0, x2, x3][k - 1]; P[ax] = x < 0 ? -1 : 1; P[4] = a; }
+      }
+      return best;
+    };
+  }
+
   // { f, lip }: lip is how far the field can understate the distance to its boundary (subdivision safety)
   function field(o, prm) {
     if (o.kind === 'poly') {
@@ -147,6 +181,7 @@
       return T.spec.kind !== 'star' ? { f: convexField(planesOf(T)), lip: 1, convex: true } : { f: starField(T), lip: 3 };
     }
     if (o.kind === 'frac') return { f: fractalField(o.id, prm), lip: 1 };
+    if (o.kind === 'mtn') return { f: mountainField(prm), lip: 1 };
     return null;
   }
 

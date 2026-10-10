@@ -5,7 +5,7 @@
 // Nothing is meshed, so shapes can move every frame.
 (function (root) {
   const P = root.Polychora, O = root.Objects, CSG = root.CSG;
-  const T_CONVEX = 1, T_STAR = 2, T_FRAC = 3, T_TORUS = 4, T_HOPF = 5;
+  const T_CONVEX = 1, T_STAR = 2, T_FRAC = 3, T_TORUS = 4, T_HOPF = 5, T_MTN = 6;
   const MAXS = 8, TEXW = 2048;
   const DEG = Math.PI / 180;
 
@@ -81,7 +81,15 @@
     return { type: T_HOPF, texels: tx, c1: base.length, c2: 0, prm: [prm.tube, 0, 0, 0] };
   }
 
+  // mountain: a header (N, half-width, floor, summit; sea, snow line), then one height per texel
+  function mountainData(prm) {
+    const hf = O.mountainHeights(prm), tx = [[hf.N, hf.a, hf.B, hf.top], [hf.sea, hf.snow, 0, 0]];
+    for (const h of hf.H) tx.push([h, 0, 0, 0]);
+    return { type: T_MTN, texels: tx, c1: hf.N, c2: 0, prm: [hf.N, hf.a, hf.B, hf.top] };
+  }
+
   function shapeData(o, prm, time) {
+    if (o.kind === 'mtn') return mountainData(prm);
     if (o.kind === 'poly') return polytopeData(o.id);
     if (o.kind === 'frac') return fractalData(o.id, prm);
     if (o.kind === 'hopf') return hopfData(prm, time);
@@ -267,6 +275,79 @@
     if (inside) addS(tin, tEnd, ivec2(k << 24 | fin, 0), ivec2(k << 24 | fi, 0));
   }
 
+  // mountain: ids below MB are surface pieces (grid cube · 8 + Kuhn tetrahedron), MB + 0..6 the sides and floor
+  #define MB 16777200
+  float mtnH(int k, ivec3 c) { int n1 = int(uPrm[k].x) + 1; return tex(uOff[k] + 2 + (c.x * n1 + c.y) * n1 + c.z).x; }
+  int kuhnPerm(vec3 f) { return f.x >= f.y ? (f.y >= f.z ? 0 : f.x >= f.z ? 1 : 4) : (f.x >= f.z ? 2 : f.y >= f.z ? 3 : 5); }
+  ivec3 kuhnAxes(int p) { return p == 0 ? ivec3(0, 1, 2) : p == 1 ? ivec3(0, 2, 1) : p == 2 ? ivec3(1, 0, 2) : p == 3 ? ivec3(1, 2, 0) : p == 4 ? ivec3(2, 0, 1) : ivec3(2, 1, 0); }
+  // the height on Kuhn tetrahedron p of cube c is h0 + d·f (f: fractional grid coordinates)
+  void kuhnLin(int k, ivec3 c, int p, out float h0, out vec3 d) {
+    ivec3 ax = kuhnAxes(p), v = c; float a = mtnH(k, v); h0 = a; d = vec3(0);
+    for (int r = 0; r < 3; r++) { int q = ax[r]; v[q] += 1; float b = mtnH(k, v); d[q] = b - a; a = b; }
+  }
+  void mtnIv(int k, vec4 Y0, vec4 Yd) {
+    int N = int(uPrm[k].x); float A = uPrm[k].y, B = uPrm[k].z, top = uPrm[k].w;
+    float lo = -1e9, hi = 1e9; int ilo = MB, ihi = MB;
+    if (!clip(vec4(1, 0, 0, 0), A, Y0, Yd, MB + 1, lo, hi, ilo, ihi) || !clip(vec4(-1, 0, 0, 0), A, Y0, Yd, MB + 2, lo, hi, ilo, ihi)
+     || !clip(vec4(0, 0, 1, 0), A, Y0, Yd, MB + 3, lo, hi, ilo, ihi) || !clip(vec4(0, 0, -1, 0), A, Y0, Yd, MB + 4, lo, hi, ilo, ihi)
+     || !clip(vec4(0, 0, 0, 1), A, Y0, Yd, MB + 5, lo, hi, ilo, ihi) || !clip(vec4(0, 0, 0, -1), A, Y0, Yd, MB + 6, lo, hi, ilo, ihi)
+     || !clip(vec4(0, -1, 0, 0), B, Y0, Yd, MB, lo, hi, ilo, ihi) || !clip(vec4(0, 1, 0, 0), top + 1e-3, Y0, Yd, MB, lo, hi, ilo, ihi)) return;
+    // walk the grid cubes the ray's shadow on the ground passes through
+    float sc = float(N) / (2.0 * A);
+    vec3 g0 = (Y0.xzw + A) * sc, gd = Yd.xzw * sc;
+    vec3 gp = g0 + gd * (lo + 1e-5 * (hi - lo));
+    ivec3 c = clamp(ivec3(floor(gp)), ivec3(0), ivec3(N - 1)), st = ivec3(sign(gd));
+    vec3 tMax, tDel;
+    for (int r = 0; r < 3; r++) {
+      if (gd[r] > 1e-12) { tMax[r] = (float(c[r] + 1) - g0[r]) / gd[r]; tDel[r] = 1.0 / gd[r]; }
+      else if (gd[r] < -1e-12) { tMax[r] = (float(c[r]) - g0[r]) / gd[r]; tDel[r] = -1.0 / gd[r]; }
+      else { tMax[r] = 1e30; tDel[r] = 1e30; }
+    }
+    bool started = false, inside = false; float t = lo, tin = lo; int ein = ilo;
+    for (int it = 0; it < 200; it++) {
+      float te = min(min(min(tMax.x, tMax.y), tMax.z), hi);
+      // where two fractional coordinates swap order, the ray moves to another Kuhn tetrahedron
+      float bs[4]; int nb = 0;
+      vec3 f0 = g0 - vec3(c);
+      for (int i = 0; i < 3; i++) for (int j = i + 1; j < 3; j++) {
+        float dd = gd[i] - gd[j];
+        if (abs(dd) < 1e-12) continue;
+        float tb = -(f0[i] - f0[j]) / dd;
+        if (tb > t && tb < te) bs[nb++] = tb;
+      }
+      for (int i = 0; i < 3; i++) for (int j = 0; j < 2; j++) if (j < nb - 1 && bs[j] > bs[j + 1]) { float x = bs[j]; bs[j] = bs[j + 1]; bs[j + 1] = x; }
+      bs[nb] = te;
+      float s0 = t;
+      for (int q = 0; q < 4; q++) {
+        if (q > nb) break;
+        float s1 = bs[q];
+        if (s1 > s0) {
+          int p = kuhnPerm(f0 + gd * (0.5 * (s0 + s1)));
+          float h0; vec3 d; kuhnLin(k, c, p, h0, d);
+          float a0 = Y0.y + s0 * Yd.y - h0 - dot(d, f0 + gd * s0), a1 = Y0.y + s1 * Yd.y - h0 - dot(d, f0 + gd * s1);
+          int id = ((c.x * N + c.y) * N + c.z) * 8 + p;
+          if (!started) { started = true; inside = a0 <= 0.0; }
+          if (!inside && a1 <= 0.0 && a0 > 0.0) { inside = true; tin = s0 + (s1 - s0) * a0 / (a0 - a1); ein = id; }
+          else if (inside && a1 > 0.0) { addS(tin, s0 + (s1 - s0) * a0 / (a0 - a1), ivec2(k << 24 | ein, 0), ivec2(k << 24 | id, 0)); inside = false; }
+        }
+        s0 = s1;
+      }
+      if (te >= hi) break;
+      int r = tMax.x <= tMax.y && tMax.x <= tMax.z ? 0 : tMax.y <= tMax.z ? 1 : 2;
+      c[r] += st[r]; if (c[r] < 0 || c[r] >= N) break;
+      tMax[r] += tDel[r]; t = te;
+    }
+    if (inside) addS(tin, hi, ivec2(k << 24 | ein, 0), ivec2(k << 24 | ihi, 0));
+  }
+  vec3 terrainColor(int k, float y, float slope) {
+    float sea = tex(uOff[k] + 1).x, snow = tex(uOff[k] + 1).y, top = uPrm[k].w;
+    if (y <= sea + 2e-4) return vec3(0.17, 0.4, 0.66);
+    float q = (y - sea) / max(1e-6, top - sea), sl = (snow - sea) / max(1e-6, top - sea);
+    vec3 sand = vec3(0.8, 0.73, 0.5), grass = vec3(0.33, 0.58, 0.27), forest = vec3(0.18, 0.4, 0.2), rock = vec3(0.5, 0.42, 0.35), scree = vec3(0.6, 0.58, 0.56), snw = vec3(0.93, 0.95, 0.98);
+    vec3 col = q < 0.04 ? mix(sand, grass, q / 0.04) : q < 0.3 ? mix(grass, forest, (q - 0.04) / 0.26) : q < sl ? mix(rock, scree, (q - 0.3) / max(1e-6, sl - 0.3)) : snw;
+    return q < sl ? mix(col, rock, clamp((slope - 1.2) / 1.2, 0.0, 1.0)) : mix(snw, scree, clamp((slope - 1.8) / 1.5, 0.0, 1.0));
+  }
+
   // ---- colour ----
   vec3 hsl(float h, float s, float l) {
     vec3 n = vec3(0.0, 8.0, 4.0), kk = mod(n + h * 12.0, 12.0); float a = s * min(l, 1.0 - l);
@@ -297,6 +378,22 @@
       else {
         float th = atan(y.y, y.x), ph = atan(y.w, y.z);
         own = vec4(hsl(fract(th / 6.2831853 + 1.0), 0.6, mod(floor(fract(ph / 6.2831853 + 1.0) * 8.0), 2.0) > 0.5 ? 0.6 : 0.44), 1.0);
+      }
+    } else if (ty == ${T_MTN}) {
+      int N = int(uPrm[k].x); float sc = float(N) / (2.0 * uPrm[k].y);
+      if (idx >= MB) {
+        int f = idx - MB;
+        nl = f == 0 ? vec4(0, -1, 0, 0) : f == 1 ? vec4(1, 0, 0, 0) : f == 2 ? vec4(-1, 0, 0, 0) : f == 3 ? vec4(0, 0, 1, 0) : f == 4 ? vec4(0, 0, -1, 0) : f == 5 ? vec4(0, 0, 0, 1) : vec4(0, 0, 0, -1);
+        // the soil of the walls, in layers
+        float l = 0.5 + 0.5 * sin(y.y * 38.0);
+        own = vec4(mix(vec3(0.3, 0.21, 0.14), vec3(0.47, 0.35, 0.24), (y.y + uPrm[k].z) / (uPrm[k].w + uPrm[k].z)) * (0.85 + 0.15 * l), 1.0);
+      } else {
+        int cell = idx >> 3, p = idx & 7;
+        ivec3 c = ivec3(cell / (N * N), (cell / N) % N, cell % N);
+        float h0; vec3 d; kuhnLin(k, c, p, h0, d);
+        vec3 g = d * sc;
+        nl = vec4(-g.x, 1.0, -g.y, -g.z);
+        own = vec4(terrainColor(k, y.y, length(g)), 1.0);
       }
     } else {
       nl = tex(idx);
@@ -337,6 +434,7 @@
       if (ty == ${T_CONVEX}) convexIv(k, Y0s[k], Yds[k]);
       else if (ty == ${T_STAR}) starIv(k, Y0s[k], Yds[k]);
       else if (ty == ${T_FRAC}) fracIv(k, Y0s[k], Yds[k]);
+      else if (ty == ${T_MTN}) mtnIv(k, Y0s[k], Yds[k]);
       else tubeIv(k, Y0s[k], Yds[k]);
       combine(k == 0 ? 0 : uOp[k]);
     }

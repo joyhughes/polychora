@@ -11,6 +11,7 @@
   OBJECTS.push({ key: 'clifford', label: 'Clifford torus', group: 'Surfaces & fibrations in S³', kind: 'clifford', s3: true });
   OBJECTS.push({ key: 'hopf', label: 'Hopf fibration', group: 'Surfaces & fibrations in S³', kind: 'hopf', s3: true });
   for (const [k, F] of Object.entries(O.FRACTALS)) OBJECTS.push({ key: 'frac:' + k, label: F.name, group: 'Sierpinski fractals', kind: 'frac', id: k });
+  OBJECTS.push({ key: 'mountain', label: 'Fractal mountain', group: 'Fractal landscapes', kind: 'mtn' });
 
   const rings = p => p.pattern === 'rings';
   function paramDefs(o) {
@@ -38,6 +39,14 @@
       { id: 'segs', label: 'Segments', min: 24, max: 192, step: 8, def: 96 },
       { id: 'tube', label: 'Tube radius', min: 0.004, max: 0.06, step: 0.001, def: 0.018, fmt: 3 },
       { id: 'tori', label: 'Hopf tori', type: 'check', def: false, show: rings },
+    ];
+    if (o.kind === 'mtn') return [
+      { id: 'seed', label: 'Seed', min: 1, max: 200, step: 1, def: 7, title: 'Each seed grows a different range' },
+      { id: 'detail', label: 'Detail', min: 2, max: 5, step: 1, def: 4, title: 'Grid halvings: 2ⁿ cells along each side of the ground' },
+      { id: 'rough', label: 'Roughness r', min: 0.3, max: 0.8, step: 0.01, def: 0.55, fmt: 2, title: 'How much each halving keeps of the random offsets' },
+      { id: 'height', label: 'Height', min: 0.3, max: 1.3, step: 0.01, def: 0.85, fmt: 2 },
+      { id: 'sea', label: 'Sea level', min: -0.48, max: 0.4, step: 0.01, def: -0.25, fmt: 2 },
+      { id: 'snow', label: 'Snow line', min: 0.3, max: 1, step: 0.01, def: 0.72, fmt: 2, title: 'Share of the way from sea level to the summit' },
     ];
     const F = O.FRACTALS[o.id];
     const defs = [{ id: 'depth', label: 'Depth', min: 0, max: F.maxDepth, step: 1, def: F.depth }];
@@ -180,7 +189,7 @@
   const nextTint = () => TINT_NAMES[1 + (scene.shapes.length - 1) % (TINT_NAMES.length - 1)][0];
   $('addShape').onclick = () => {
     // a tesseract cutting into the current shape is the quickest way to see what subtraction does
-    const solid = scene.shapes.some(sh => ['poly', 'frac'].includes(objOf(sh.key).kind));
+    const solid = scene.shapes.some(sh => ['poly', 'frac', 'mtn'].includes(objOf(sh.key).kind));
     scene.shapes.push(newShape('poly:tesseract', { op: solid ? 'subtract' : 'add', tint: nextTint(), place: newPlace() }));
     selectShape(scene.shapes.length - 1); dirty = true;
   };
@@ -423,6 +432,7 @@
   function initialPose() {
     const M = ident4();
     if (cur().s3) { rotWorld(M, 1, 2, 0.5); return M; } // keep the torus axes readable in stereographic view
+    if (cur().kind === 'mtn') { rotWorld(M, 0, 2, 0.5); return M; } // up stays up, and slices start straight across w
     rotWorld(M, 0, 3, 0.31); rotWorld(M, 1, 2, 0.23); rotWorld(M, 2, 3, 0.17); rotWorld(M, 0, 1, 0.11); return M;
   }
   let R = ident4(), T = [0, 0, 0, 0];
@@ -463,6 +473,9 @@
       if (o.s3) { state.p4 = 'stereo'; state.dist = 7.5; }
       else { if (state.p4 === 'stereo') state.p4 = 'persp'; state.dist = 3.7; }
       if (o.kind === 'hopf') state.col = 'flat'; // fibres coloured by their point on S²
+      // the mountain keeps its own colours and keeps y up: it turns about the vertical and through w
+      if (o.kind === 'mtn') { state.col = 'flat'; state.spin = [0, 0.15, 0, 0, 0, 0]; state.dist = 4.3; state.pitch = 0.5; }
+      else if (was && was.kind === 'mtn') { state.col = 'depth'; state.spin = [0, 0, 0.12, 0.3, 0, 0.18]; state.pitch = -0.35; }
       R = initialPose(); T = [0, 0, 0, 0];
     }
     buildParamUI(); buildShapeList(); showInfo(); dirty = true; syncUI();
@@ -520,7 +533,7 @@
   }
   function placeholderInfo(o) {
     const c = o.kind === 'poly' && P.CATALOG.find(c => c.id === o.id);
-    const labels = o.kind === 'poly' ? ['cells', 'faces', 'edges', 'verts'] : o.kind === 'frac' ? ['copies', 'cells', 'faces', 'verts'] : o.kind === 'hopf' ? ['fibres', 'rings', 'segs', 'tori'] : ['grid', 'tris', 'tets', 'curves'];
+    const labels = o.kind === 'poly' ? ['cells', 'faces', 'edges', 'verts'] : o.kind === 'frac' ? ['copies', 'cells', 'faces', 'verts'] : o.kind === 'hopf' ? ['fibres', 'rings', 'segs', 'tori'] : o.kind === 'mtn' ? ['grid', 'summit', 'tets', 'verts'] : ['grid', 'tris', 'tets', 'curves'];
     return { name: shortName(o), sub: c ? c.sym : '', counts: labels.map(l => [l, '…']), rows: [] };
   }
   // the spinner beside the symbol while a build is pending (after a short delay, so quick ones do not flicker)

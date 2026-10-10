@@ -274,6 +274,131 @@
     });
   }
 
-  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, hsl };
+  // ---------------- fractal mountain ----------------
+  // A 4D landscape: the solid between a flat floor and a height y = h(x, z, w) over a cube of ground. The heights
+  // come from diamond–square on a 3D grid: each new point is the mean of its neighbours plus a random offset that
+  // shrinks by the roughness at every halving. Between grid points h is linear on the Kuhn split of each cube into
+  // six tetrahedra (sorted fractional coordinates), so the mesh, the CSG field and the GPU all see the same surface.
+  const KUHN = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+  const MTN_HALF = 0.75, MTN_FLOOR = 0.4;
+  let hfKey = '', hfVal = null;
+  function mountainHeights(prm) {
+    const key = JSON.stringify(prm);
+    if (key === hfKey) return hfVal;
+    const N = 2 ** prm.detail, n1 = N + 1, a = MTN_HALF, B = MTN_FLOOR, H = new Float64Array(n1 * n1 * n1);
+    const at = (i, j, k) => (i * n1 + j) * n1 + k;
+    let seed = (prm.seed * 2654435761) >>> 0;
+    const rnd = () => { seed = (seed + 0x6D2B79F5) >>> 0; let t = seed; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return (((t ^ (t >>> 14)) >>> 0) / 4294967296) * 2 - 1; };
+    const c = [0, 0, 0];
+    let amp = 0.42 * prm.height;
+    for (let s = N; s >= 2; s >>= 1, amp *= prm.rough) {
+      const h = s >> 1;
+      // points with three, then two, then one coordinate halfway between the coarse grid points
+      for (const m of [3, 2, 1]) for (c[0] = 0; c[0] <= N; c[0] += h) for (c[1] = 0; c[1] <= N; c[1] += h) for (c[2] = 0; c[2] <= N; c[2] += h) {
+        const odd = c.map(x => (x / h) & 1);
+        if (odd[0] + odd[1] + odd[2] !== m) continue;
+        // the coarse corners around it, and the points one step away along its other axes (filled one pass ago)
+        let sum = 0, cnt = 0;
+        const ax = [0, 1, 2].filter(q => odd[q]);
+        for (let b = 0; b < 1 << m; b++) { const p = c.slice(); ax.forEach((q, r) => { p[q] += b >> r & 1 ? h : -h; }); sum += H[at(p[0], p[1], p[2])]; cnt++; }
+        for (let q = 0; q < 3; q++) if (!odd[q]) for (const d of [-h, h]) { const x = c[q] + d; if (x < 0 || x > N) continue; const p = c.slice(); p[q] = x; sum += H[at(p[0], p[1], p[2])]; cnt++; }
+        H[at(c[0], c[1], c[2])] = sum / cnt + amp * rnd();
+      }
+    }
+    // a peak in the middle of the ground, then the water fills everything below sea level
+    let top = -Infinity;
+    for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) for (let k = 0; k <= N; k++) {
+      const x = -1 + 2 * i / N, z = -1 + 2 * j / N, w = -1 + 2 * k / N, r2 = x * x + z * z + w * w, q = at(i, j, k);
+      H[q] = Math.max(prm.sea, -B + 0.02, H[q] + prm.height * (1.1 * Math.exp(-2.4 * r2) - 0.3));
+      top = Math.max(top, H[q]);
+    }
+    hfKey = key; hfVal = { N, a, B, H, sea: prm.sea, top, snow: prm.sea + prm.snow * (top - prm.sea) };
+    return hfVal;
+  }
+  // ground colour by height (as a share of the way from sea level to the summit) and steepness
+  function terrainColor(y, slope, hf) {
+    if (y <= hf.sea + 1e-9) return [0.17, 0.4, 0.66];
+    const q = (y - hf.sea) / Math.max(1e-6, hf.top - hf.sea), mix = (A, Bc, t) => A.map((v, i) => v + (Bc[i] - v) * Math.max(0, Math.min(1, t)));
+    const sand = [0.8, 0.73, 0.5], grass = [0.33, 0.58, 0.27], forest = [0.18, 0.4, 0.2], rock = [0.5, 0.42, 0.35], scree = [0.6, 0.58, 0.56], snow = [0.93, 0.95, 0.98];
+    const sl = (hf.snow - hf.sea) / Math.max(1e-6, hf.top - hf.sea);
+    let col = q < 0.04 ? mix(sand, grass, q / 0.04) : q < 0.3 ? mix(grass, forest, (q - 0.04) / 0.26) : q < sl ? mix(rock, scree, (q - 0.3) / Math.max(1e-6, sl - 0.3)) : snow;
+    if (q < sl) col = mix(col, rock, (slope - 1.2) / 1.2);
+    else col = mix(snow, scree, (slope - 1.8) / 1.5);
+    return col;
+  }
+
+  function mountain(prm) {
+    const hf = mountainHeights(prm), { N, a, B, H } = hf, n1 = N + 1, sc = N / (2 * a), M = new Mesh();
+    const at = (i, j, k) => (i * n1 + j) * n1 + k, coord = i => -a + 2 * a * i / N;
+    // grid points on the surface: axes x, z, w with height y
+    for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) for (let k = 0; k <= N; k++) M.pt([coord(i), H[at(i, j, k)], coord(j), coord(k)]);
+    const floorPt = new Map(), fp = (i, j, k) => { const q = at(i, j, k); let v = floorPt.get(q); if (v === undefined) { v = M.pt([coord(i), -B, coord(j), coord(k)]); floorPt.set(q, v); } return v; };
+    const soil = y => { const t = (y + B) / (hf.top + B); return [0.36 + 0.12 * t, 0.26 + 0.08 * t, 0.18 + 0.05 * t]; };
+    // the surface: six tetrahedra per grid cube
+    let water = 0;
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) for (let k = 0; k < N; k++) for (const p of KUHN) {
+      const v = [i, j, k], ch = [at(i, j, k)];
+      for (const q of p) { v[q]++; ch.push(at(v[0], v[1], v[2])); }
+      const g = [0, 0, 0]; for (let r = 0; r < 3; r++) g[p[r]] = (H[ch[r + 1]] - H[ch[r]]) * sc;
+      const mean = (H[ch[0]] + H[ch[1]] + H[ch[2]] + H[ch[3]]) / 4, wet = Math.max(H[ch[0]], H[ch[1]], H[ch[2]], H[ch[3]]) <= hf.sea + 1e-9;
+      if (wet) water++;
+      M.tet(ch[0], ch[1], ch[2], ch[3], terrainColor(wet ? hf.sea : mean, Math.hypot(...g), hf));
+    }
+    // the walls: over each side of the cube, a prism from the floor up to the surface for each grid triangle
+    const side = (ax, lv, b, c) => (u, v) => { const p = [0, 0, 0]; p[ax] = lv; p[b] = u; p[c] = v; return p; };
+    for (let ax = 0; ax < 3; ax++) for (const lv of [0, N]) {
+      const [b, c] = [0, 1, 2].filter(q => q !== ax), P3 = side(ax, lv, b, c);
+      for (let u = 0; u < N; u++) for (let v = 0; v < N; v++) for (const tri of [[[u, v], [u + 1, v], [u + 1, v + 1]], [[u, v], [u, v + 1], [u + 1, v + 1]]]) {
+        const ps = tri.map(([x, y]) => P3(x, y)), T = ps.map(p => at(p[0], p[1], p[2])), F = ps.map(p => fp(p[0], p[1], p[2]));
+        const col = soil((H[T[0]] + H[T[1]] + H[T[2]]) / 6 - B / 2);
+        M.tet(T[0], T[1], T[2], F[0], col); M.tet(T[1], T[2], F[0], F[1], col); M.tet(T[2], F[0], F[1], F[2], col);
+      }
+    }
+    // the floor: the cube split into six
+    for (const p of KUHN) { const v = [0, 0, 0], ch = [fp(0, 0, 0)]; for (const q of p) { v[q] = N; ch.push(fp(v[0], v[1], v[2])); } M.tet(ch[0], ch[1], ch[2], ch[3], [0.24, 0.18, 0.13]); }
+
+    // faces and edges to draw: the surface over the grid planes through the middle and the sides of the ground,
+    // and the edges of the block
+    const step = N / 2;
+    const triCol = q => { const t = terrainColor(Math.max(hf.sea, (H[q[0]] + H[q[1]] + H[q[2]]) / 3), 0, hf); return t; };
+    for (let ax = 0; ax < 3; ax++) for (let lv = 0; lv <= N; lv += step) {
+      const [b, c] = [0, 1, 2].filter(q => q !== ax), P3 = side(ax, lv, b, c);
+      for (let u = 0; u < N; u++) for (let v = 0; v < N; v++) for (const tri of [[[u, v], [u + 1, v], [u + 1, v + 1]], [[u, v], [u, v + 1], [u + 1, v + 1]]]) {
+        const T = tri.map(([x, y]) => { const p = P3(x, y); return at(p[0], p[1], p[2]); });
+        M.tri(T[0], T[1], T[2], triCol(T));
+      }
+    }
+    for (let e = 0; e < 3; e++) {
+      const [b, c] = [0, 1, 2].filter(q => q !== e);
+      for (let lb = 0; lb <= N; lb += step) for (let lc = 0; lc <= N; lc += step) {
+        const pt = t => { const p = [0, 0, 0]; p[e] = t; p[b] = lb; p[c] = lc; return p; };
+        const outer = (lb === 0 || lb === N) && (lc === 0 || lc === N);
+        for (let t = 0; t < N; t++) {
+          const p = pt(t), q = pt(t + 1), A = at(p[0], p[1], p[2]), Bq = at(q[0], q[1], q[2]);
+          M.edge(A, Bq);
+          if (outer) {
+            // the wall where two sides of the ground meet, and the floor's edge beneath it
+            const fa = fp(p[0], p[1], p[2]), fb = fp(q[0], q[1], q[2]), col = soil(-B / 2);
+            M.tri(A, Bq, fb, col); M.tri(A, fb, fa, col);
+            M.edge(fa, fb);
+            if (t === 0) M.edge(A, fa);
+            if (t === N - 1) M.edge(Bq, fb);
+          }
+        }
+      }
+    }
+    const Hs = -Math.log2(prm.rough);
+    const rows = [
+      ['Rule', 'diamond–square on a 3D grid: each new height is its neighbours’ mean plus a random offset scaled by r at each halving'],
+      ['Dimension', `surface ≈ 4 − H = ${(4 - Hs).toFixed(3)} (H = −log₂ r = ${Hs.toFixed(3)})`],
+      ['Slices', 'each slice across w is an ordinary 3D mountain; sweeping it moves through the range'],
+      ['Water', `${Math.round(100 * water / (6 * N ** 3))}% of the ground below sea level`],
+    ];
+    return M.done({
+      info: { name: 'Fractal mountain', sub: `y = h(x, z, w), ${N}³ grid, seed ${prm.seed}`, counts: [['grid', N + '³'], ['summit', hf.top.toFixed(2)], ['tets', M.tets.length / 4], ['verts', M.pts.length / 4]], rows },
+    });
+  }
+
+  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, hsl, mountain, mountainHeights, KUHN };
   if (typeof module !== 'undefined') module.exports = root.Objects;
 })(typeof window !== 'undefined' ? window : globalThis);
