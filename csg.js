@@ -683,8 +683,20 @@
       const solidSoFar = wf.slice(0, k).some(Boolean);
       if (!solidSoFar) { if (op === 'add') copyInto(Sk, next); }
       else {
-        const lip = Math.max(1, ...items.slice(0, k).map(o => (o.field ? o.field.lip : 1)));
-        clipPass(Sk, next, op === 'add' ? (p0, p1, p2, p3, W) => -F(p0, p1, p2, p3, W) : F, lip, cur, Fk, false);
+        const lip = Math.max(1, ...items.slice(0, k).map(o => (o.field ? o.field.lip : 1)), dk ? items[k].field.lip : 1);
+        let keep = op === 'add' ? (p0, p1, p2, p3, W) => -F(p0, p1, p2, p3, W) : F;
+        // A subtracted star polytope's inner cells lie inside what it removes, so they would float in the hollow:
+        // only the parts of its cells on its outer surface (its field ≈ 0, not < 0) can become walls of the cut.
+        if (op === 'subtract' && dk && !items[k].field.convex) {
+          const inF = F, SW = new Float64Array(5), SHELL = 1e-7;
+          keep = (p0, p1, p2, p3, W) => {
+            const a = inF(p0, p1, p2, p3, W), b = -dk(p0, p1, p2, p3, W ? SW : undefined) - SHELL;
+            if (b <= a) return a;
+            if (W) W.set(SW);
+            return b;
+          };
+        }
+        clipPass(Sk, next, keep, lip, cur, Fk, false);
       }
       cur = next;
     }
