@@ -334,9 +334,10 @@
     const cfg = await avcConfig(w, h, bitrate);
     if (!cfg) return null;
     const muxer = new M.Muxer({ target: new M.ArrayBufferTarget(), video: { codec: 'avc', width: w, height: h, frameRate: 60 }, fastStart: 'in-memory', firstTimestampBehavior: 'offset' });
-    let failed = null;
-    const enc = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: e => { failed = e; } });
-    enc.configure(cfg);
+    let failed = null, forceKey = false;
+    const out = Mp4Write.writer(muxer, cfg, w, h);
+    const newEncoder = () => { const e = new VideoEncoder({ output: (chunk, meta) => { try { out.output(chunk, meta); } catch (x) { failed = x; } }, error: x => { failed = x; } }); e.configure(cfg); return e; };
+    let enc = newEncoder();
     // frames are copied to a fixed-size canvas, so resizing the window mid-recording only rescales them
     const copy = document.createElement('canvas'); copy.width = w; copy.height = h;
     const cx = copy.getContext('2d');
@@ -345,17 +346,23 @@
       ext: 'mp4',
       frame(now) {
         if (failed || enc.encodeQueueSize > 8) return; // drop a frame rather than fall behind
+        if (out.needsAnnexB && cfg.avc.format !== 'annexb') {
+          // the encoder sent no stream settings: a new one with start-code framing puts them in every keyframe
+          // (Firefox ignores a change of framing on an encoder that is already running)
+          cfg.avc.format = 'annexb'; out.needsAnnexB = false; enc.close(); enc = newEncoder(); forceKey = true;
+        }
         if (t0 < 0) t0 = now;
         cx.drawImage(canvas, 0, 0, w, h);
         const vf = new VideoFrame(copy, { timestamp: Math.round((now - t0) * 1000) });
-        const keyFrame = now - lastKey >= 2000;
-        if (keyFrame) lastKey = now;
+        const keyFrame = forceKey || now - lastKey >= 2000;
+        if (keyFrame) { lastKey = now; forceKey = false; }
         enc.encode(vf, { keyFrame }); vf.close();
       },
       async stop() {
         if (!failed) await enc.flush().catch(e => { failed = e; });
         if (enc.state !== 'closed') enc.close();
         if (failed) throw failed;
+        if (!out.chunks) throw new Error('the video encoder produced no usable frames');
         muxer.finalize();
         return new Blob([muxer.target.buffer], { type: 'video/mp4' });
       },
