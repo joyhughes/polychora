@@ -399,11 +399,15 @@
     });
   }
 
-  // ---------------- fractal tree ----------------
-  // Each branch is a tapered prism over an icosahedron, lying along its own axis a with the icosahedron in the 3-space
-  // across it (frame e1, e2, e3). It forks into k shorter, thinner copies tilted by the spread angle toward the corners
-  // of a segment, triangle or tetrahedron in that 3-space; each level turns those corners about the frame's diagonal
-  // (the twist), so the branches reach into all four dimensions. Tips carry small 16-cells as leaves.
+  // ---------------- L-system tree ----------------
+  // A bracketed L-system drawn by a 4D turtle. The turtle carries a position, a heading H and three more directions
+  // e1, e2, e3 across it. Each F draws a branch: a prism over an icosahedron lying in the 3-space across H.
+  //   F draw forward     f move forward     [ ] save and restore the turtle     L a leaf (a 16-cell)
+  //   + −  turn toward ±e1      & ^  pitch toward ±e2      < >  turn toward ±e3, into the fourth dimension
+  //   \ /  roll e1 toward e2     { }  roll e2 toward e3      |  turn around
+  //   ! thinner (width ratio)   " shorter (length ratio)
+  // Any turn may carry its own angle in degrees, as +(30). Other letters only drive the rewriting. A symbol with several
+  // rules picks one at random (from the seed) each time it is rewritten.
   const PHI = (1 + Math.sqrt(5)) / 2;
   const ICOSA = (() => {
     const v = [];
@@ -417,59 +421,105 @@
     for (let i = 0; i < 12; i++) for (let j = i + 1; j < 12; j++) if (Math.abs(d2(i, j) - 4) < 1e-9) edges.push([i, j]);
     return { verts: n, faces, normals, edges, inr };
   })();
-  const FORKS = {
-    2: [[1, 0, 0], [-1, 0, 0]],
-    3: [0, 1, 2].map(j => [Math.cos(2 * Math.PI * j / 3), Math.sin(2 * Math.PI * j / 3), 0]),
-    // a tetrahedron with two corners in the e1–e2 plane, so the first fork has two branches in the slice w = 0
-    4: [[1, Math.SQRT2, 0], [1, -Math.SQRT2, 0], [-1, 0, Math.SQRT2], [-1, 0, -Math.SQRT2]].map(p => p.map(x => x / Math.sqrt(3))),
+  const LSYS_PRESETS = {
+    tetra: { name: '4D tetrahedral tree', axiom: 'A', rules: 'A = !"F/{[+&<A][+^>A][-&>A][-^<A]', iter: 5, angle: 22, lenRatio: 0.66, widthRatio: 0.63, thick: 0.09, leaves: true, leafSize: 0.1 },
+    ternary: { name: 'Ternary tree, spun into w', axiom: 'FFA', rules: 'A = !"[&FA]/(120)<(14)[&FA]/(120)<(14)[&FA]', iter: 5, angle: 30, lenRatio: 0.78, widthRatio: 0.7, thick: 0.1, leaves: true, leafSize: 0.16 },
+    bush: { name: 'Bush in four dimensions', axiom: 'F', rules: 'F = FF-[-F+F<F]+[+F-F>F]^[^F&F<F]&[&F^F>F]', iter: 3, angle: 22.5, lenRatio: 1, widthRatio: 1, thick: 0.1, leaves: true, leafSize: 0.45 },
+    weed: { name: 'Stochastic weed', axiom: 'X', rules: 'X = F[+X][>X]F[-X][<X]\nX = F[&X][^X]FX\nX = F[+<X]F[->X]X\nF = FF', iter: 5, angle: 28, lenRatio: 1, widthRatio: 1, thick: 0.3, leaves: true, leafSize: 1.2 },
+    fern: { name: 'Plant with a leader', axiom: 'X', rules: 'X = F[+X][<X]F[-X][>X]/+X\nF = FF', iter: 5, angle: 22.5, lenRatio: 1, widthRatio: 1, thick: 0.35, leaves: true, leafSize: 1.1 },
   };
+  const LSYS_MAX_STRING = 400000, LSYS_MAX_PARTS = 20000;
+  // "X = rhs" lines (also X -> rhs, X → rhs); lines starting with # are comments
+  function parseRules(text) {
+    const rules = new Map(), bad = [];
+    for (const raw of String(text).split(/\n/)) {
+      const line = raw.trim(); if (!line || line.startsWith('#')) continue;
+      const m = line.match(/^(\S)\s*(?:=|->|→)\s*(.*)$/);
+      if (!m) { bad.push(line); continue; }
+      const rhs = m[2].replace(/\s+/g, '');
+      if (!rules.has(m[1])) rules.set(m[1], []);
+      rules.get(m[1]).push(rhs);
+    }
+    return { rules, bad };
+  }
   let treeKey = '', treeVal = null;
   function treeData(prm) {
     const key = JSON.stringify(prm);
     if (key === treeKey) return treeVal;
     let seed = (prm.seed * 2654435761) >>> 0;
-    const rnd = () => { seed = (seed + 0x6D2B79F5) >>> 0; let t = seed; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return (((t ^ (t >>> 14)) >>> 0) / 4294967296) * 2 - 1; };
-    const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2] + u[3] * v[3];
-    const add = (u, v, s = 1) => u.map((x, i) => x + s * v[i]);
-    // rotation by th in the plane of orthonormal a and b
-    const rot = (x, a, b, th) => { const xa = dot(x, a), xb = dot(x, b), c = Math.cos(th) - 1, s = Math.sin(th); return x.map((v, i) => v + c * (xa * a[i] + xb * b[i]) + s * (xa * b[i] - xb * a[i])); };
-    // a 3D rotation of the fork corners about the diagonal (1,1,1)
-    const twist3 = (p, th) => { const u = 1 / Math.sqrt(3), c = Math.cos(th), s = Math.sin(th), d = (p[0] + p[1] + p[2]) * u * (1 - c);
-      return [p[0] * c + s * u * (p[2] - p[1]) + d * u, p[1] * c + s * u * (p[0] - p[2]) + d * u, p[2] * c + s * u * (p[1] - p[0]) + d * u]; };
-    const K = prm.forks, corners = FORKS[K], spread = prm.spread * DEG, tw = prm.twist * DEG, wild = prm.wild, shrinkR = Math.pow(K, -1 / 3);
-    const br = [];
-    const grow = (base, a, e, L, r0, level) => {
-      const r1 = r0 * 0.8, tip = add(base, a, L), b = { base, a, e, L, r0, r1, level, leaf: level === prm.depth && prm.leaves ? prm.leafSize : 0 };
-      br.push(b);
-      if (level < prm.depth) {
-        const turn = tw * level + wild * Math.PI * rnd();
-        for (const c0 of corners) {
-          const c = twist3(c0, turn), sdir = e[0].map((_, i) => c[0] * e[0][i] + c[1] * e[1][i] + c[2] * e[2][i]);
-          const sl = Math.hypot(...sdir), s1 = sdir.map(x => x / sl), th = spread * (1 + 0.5 * wild * rnd());
-          const a2 = rot(a, a, s1, th), e2 = e.map(x => rot(x, a, s1, th));
-          grow(tip, a2, e2, L * prm.ratio * (1 + 0.35 * wild * rnd()), r1 * shrinkR, level + 1);
-        }
+    const rnd = () => { seed = (seed + 0x6D2B79F5) >>> 0; let t = seed; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    const { rules, bad } = parseRules(prm.rules);
+    // rewrite, keeping (angle) arguments with the symbol before them
+    let str = String(prm.axiom).replace(/\s+/g, ''), done = 0, cut = false;
+    for (; done < prm.iter; done++) {
+      let out = '';
+      for (let i = 0; i < str.length; i++) {
+        const c = str[i], alts = rules.get(c);
+        if (str[i + 1] === '(') { const j = str.indexOf(')', i); if (j > i) { out += alts ? alts[Math.floor(rnd() * alts.length)] : str.slice(i, j + 1); i = j; continue; } }
+        out += alts ? alts[alts.length === 1 ? 0 : Math.floor(rnd() * alts.length)] : c;
+        if (out.length > LSYS_MAX_STRING) break;
       }
-      b.skip = br.length;
-    };
-    grow([0, 0, 0, 0], [0, 1, 0, 0], [[1, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], 1, prm.thick, 0);
-    // fit the tree into a ball of radius 1.15 about the origin
-    const lo = [Infinity, Infinity, Infinity, Infinity], hi = lo.map(() => -Infinity);
-    for (const b of br) for (const p of [b.base, add(b.base, b.a, b.L)]) for (let i = 0; i < 4; i++) { lo[i] = Math.min(lo[i], p[i]); hi[i] = Math.max(hi[i], p[i]); }
-    const mid = lo.map((x, i) => (x + hi[i]) / 2);
-    let R = 0; for (const b of br) for (const p of [b.base, add(b.base, b.a, b.L)]) R = Math.max(R, Math.hypot(...p.map((x, i) => x - mid[i])));
-    const sc = 1.15 / R;
-    for (const b of br) { b.base = b.base.map((x, i) => (x - mid[i]) * sc); b.L *= sc; b.r0 *= sc; b.r1 *= sc; b.leaf *= sc; }
-    // bounding balls of each branch and of each subtree (branches are stored depth first, so a subtree is br[i .. skip))
+      if (out.length > LSYS_MAX_STRING) { cut = true; break; }
+      str = out;
+    }
+    // interpret
+    const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2] + u[3] * v[3];
+    const turn = (T, i, j, th) => { const a = T.F[i], b = T.F[j], c = Math.cos(th), s = Math.sin(th); T.F[i] = a.map((x, q) => c * x + s * b[q]); T.F[j] = b.map((x, q) => c * x - s * a[q]); };
+    const ortho = F => { for (let i = 0; i < 4; i++) { for (let j = 0; j < i; j++) { const d = dot(F[i], F[j]); F[i] = F[i].map((x, q) => x - d * F[j][q]); } const l = Math.hypot(...F[i]); F[i] = F[i].map(x => x / l); } };
+    const DEF = prm.angle * DEG;
+    // frame F = [H, e1, e2, e3]: up along y, then x, z, w
+    let T = { p: [0, 0, 0, 0], F: [[0, 1, 0, 0], [1, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], w: prm.thick, len: 1 };
+    const stack = [], br = [], scopes = [[]];
+    let canMerge = false, level = 0, maxLevel = 0, ops = 0, full = false;
+    const push = rec => { if (br.length >= LSYS_MAX_PARTS) { full = true; return; } rec.level = level; br.push(rec); scopes[scopes.length - 1].push(br.length - 1); };
+    for (let i = 0; i < str.length && !full; i++) {
+      const c = str[i];
+      let th = DEF;
+      if (str[i + 1] === '(') { const j = str.indexOf(')', i); if (j > i) { const v = parseFloat(str.slice(i + 2, j)); if (isFinite(v)) th = v * DEG; i = j; } }
+      if (c === 'F') {
+        const last = br[br.length - 1];
+        if (canMerge && last) last.L += T.len;
+        else push({ base: T.p.slice(), a: T.F[0].slice(), e: [T.F[1].slice(), T.F[2].slice(), T.F[3].slice()], L: T.len, r0: T.w, r1: T.w, leaf: 0 });
+        T.p = T.p.map((x, q) => x + T.len * T.F[0][q]); canMerge = true; continue;
+      }
+      canMerge = false;
+      if (c === 'f') T.p = T.p.map((x, q) => x + T.len * T.F[0][q]);
+      else if (c === '+') turn(T, 0, 1, th); else if (c === '-') turn(T, 0, 1, -th);
+      else if (c === '&') turn(T, 0, 2, th); else if (c === '^') turn(T, 0, 2, -th);
+      else if (c === '<') turn(T, 0, 3, th); else if (c === '>') turn(T, 0, 3, -th);
+      else if (c === '\\') turn(T, 1, 2, th); else if (c === '/') turn(T, 1, 2, -th);
+      else if (c === '{') turn(T, 2, 3, th); else if (c === '}') turn(T, 2, 3, -th);
+      else if (c === '|') turn(T, 0, 1, Math.PI);
+      else if (c === '!') T.w *= prm.widthRatio;
+      else if (c === '"') T.len *= prm.lenRatio;
+      else if (c === '[') { stack.push({ p: T.p.slice(), F: T.F.map(v => v.slice()), w: T.w, len: T.len }); scopes.push([]); level++; maxLevel = Math.max(maxLevel, level); }
+      else if (c === ']') { if (stack.length) { T = stack.pop(); for (const k of scopes.pop()) br[k].skip = br.length; level--; } }
+      else if (c === 'L') push({ base: T.p.slice(), a: T.F[0].slice(), e: [T.F[1].slice(), T.F[2].slice(), T.F[3].slice()], L: 0, r0: 0, r1: 0, leaf: prm.leafSize });
+      if (++ops % 32 === 0) ortho(T.F);
+    }
+    for (const sc of scopes) for (const k of sc) if (br[k].skip === undefined) br[k].skip = br.length;
+    // a leaf on every branch with nothing drawn after it
+    if (prm.leaves) br.forEach((b, i) => { if (b.L > 0 && b.skip === i + 1) b.leaf = prm.leafSize; });
+    const add = (u, v, s = 1) => u.map((x, i) => x + s * v[i]);
+    if (br.length) {
+      // fit the tree into a ball of radius 1.15 about the origin
+      const lo = [Infinity, Infinity, Infinity, Infinity], hi = lo.map(() => -Infinity);
+      for (const b of br) for (const p of [b.base, add(b.base, b.a, b.L)]) for (let i = 0; i < 4; i++) { lo[i] = Math.min(lo[i], p[i]); hi[i] = Math.max(hi[i], p[i]); }
+      const mid = lo.map((x, i) => (x + hi[i]) / 2);
+      let R = 1e-9; for (const b of br) for (const p of [b.base, add(b.base, b.a, b.L)]) R = Math.max(R, Math.hypot(...p.map((x, i) => x - mid[i])) + Math.max(b.r0 / ICOSA.inr, b.leaf));
+      const sc = 1.15 / R;
+      for (const b of br) { b.base = b.base.map((x, i) => (x - mid[i]) * sc); b.L *= sc; b.r0 *= sc; b.r1 *= sc; b.leaf *= sc; }
+    }
+    // bounding balls of each part and of each subtree (br[i .. skip))
     const cr = 1 / ICOSA.inr;
     for (const b of br) { b.c = add(b.base, b.a, b.L / 2); b.R = Math.hypot(b.L / 2, b.r0 * cr); if (b.leaf) { const t = add(b.base, b.a, b.L); b.R = Math.max(b.R, Math.hypot(...t.map((x, i) => x - b.c[i])) + b.leaf); } }
     for (let i = br.length - 1; i >= 0; i--) {
-      const b = br[i], lo2 = b.c.map(x => x), hi2 = b.c.map(x => x);
+      const b = br[i], lo2 = b.c.slice(), hi2 = b.c.slice();
       for (let j = i; j < b.skip; j++) for (let q = 0; q < 4; q++) { lo2[q] = Math.min(lo2[q], br[j].c[q] - br[j].R); hi2[q] = Math.max(hi2[q], br[j].c[q] + br[j].R); }
       b.sc = lo2.map((x, q) => (x + hi2[q]) / 2);
       b.sR = 0; for (let j = i; j < b.skip; j++) b.sR = Math.max(b.sR, Math.hypot(...br[j].c.map((x, q) => x - b.sc[q])) + br[j].R);
     }
-    treeKey = key; treeVal = { br, depth: prm.depth };
+    treeKey = key; treeVal = { br, depth: Math.max(1, maxLevel), str: str.length, done, cut, full, bad, rules };
     return treeVal;
   }
 
@@ -480,7 +530,9 @@
     T.br.forEach((b, bi) => {
       const tip = b.base.map((x, i) => x + b.L * b.a[i]);
       const ring = (o, r) => I.verts.map(v => M.pt(o.map((x, i) => x + r * cr * (v[0] * b.e[0][i] + v[1] * b.e[1][i] + v[2] * b.e[2][i]))));
-      const B = ring(b.base, b.r0), Tp = ring(tip, b.r1), cb = M.pt(b.base), ct = M.pt(tip), col = bark(b.level);
+      const col = bark(b.level);
+      if (b.r0 > 0) {
+      const B = ring(b.base, b.r0), Tp = ring(tip, b.r1), cb = M.pt(b.base), ct = M.pt(tip);
       for (const [i, j, k] of I.faces) {
         M.tet(B[i], B[j], B[k], Tp[i], col); M.tet(B[j], B[k], Tp[i], Tp[j], col); M.tet(B[k], Tp[i], Tp[j], Tp[k], col);
         M.tet(cb, B[i], B[j], B[k], col); M.tet(ct, Tp[i], Tp[j], Tp[k], col);
@@ -488,6 +540,7 @@
       }
       for (const [i, j] of I.edges) { M.tri(B[i], B[j], Tp[j], col); M.tri(B[i], Tp[j], Tp[i], col); M.edge(B[i], B[j]); M.edge(Tp[i], Tp[j]); }
       for (let i = 0; i < 12; i++) M.edge(B[i], Tp[i]);
+      }
       if (b.leaf) {
         // a 16-cell: the points within leaf size of the tip in the sum of |coordinates|
         leaves++;
@@ -500,19 +553,21 @@
         for (let m = 0; m < 32; m++) { const skip = m & 3, sg = [0, 1, 2].map(q => (m >> (q + 2) & 1 ? -1 : 1)), ax = [0, 1, 2, 3].filter(q => q !== skip); M.tri(vx(ax[0], sg[0]), vx(ax[1], sg[1]), vx(ax[2], sg[2]), lc); }
       }
     });
-    const K = prm.forks, dim = Math.log(K) / Math.log(1 / prm.ratio);
+    const esc = x => String(x).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+    const rules = [...T.rules].map(([k, alts]) => alts.map(r => `${esc(k)} → ${esc(r)}`).join('<br>')).join('<br>');
     const rows = [
-      ['Rule', `each branch forks into ${K} copies ${Math.round(100 * prm.ratio)}% as long, tilted ${prm.spread}° toward the corners of a ${K === 2 ? 'segment' : K === 3 ? 'triangle' : 'tetrahedron'} in the 3-space across it`],
-      ['Thickness', `each child keeps 1/${K} of its parent's 3D cross-section (Leonardo's rule in 4D)`],
-      ['Dimension', `tips: log ${K} / log ${(1 / prm.ratio).toFixed(3)} = ${dim.toFixed(3)}`],
-      ['Branch', 'a tapered 4D prism over an icosahedron'],
-      ['Slices', 'a slice cuts the trunk and whichever branches cross it; sweeping it finds the others'],
+      ['Axiom', `<code>${esc(prm.axiom) || '—'}</code>`],
+      ['Rules', rules ? `<code>${rules}</code>` : 'none'],
+      ['String', `${T.str.toLocaleString()} symbols after ${T.done} rewriting${T.done === 1 ? '' : 's'}${T.cut ? ` (stopped: the next would pass ${LSYS_MAX_STRING.toLocaleString()})` : ''}`],
     ];
+    if (T.full) rows.push(['Drawn', `the first ${LSYS_MAX_PARTS.toLocaleString()} branches and leaves only`]);
+    if (T.bad.length) rows.push(['Not read', `<code>${T.bad.map(esc).join('<br>')}</code> (write rules as X = …)`]);
+    rows.push(['Branch', 'a 4D prism over an icosahedron; F steps in a straight line join into one']);
     return M.done({
-      info: { name: 'Fractal tree', sub: `${K}-way forks, depth ${prm.depth}, seed ${prm.seed}`, counts: [['branches', T.br.length], ['leaves', leaves], ['tets', M.tets.length / 4], ['verts', M.pts.length / 4]], rows },
+      info: { name: 'L-system tree', sub: `${T.done} iteration${T.done === 1 ? '' : 's'}, ${prm.angle}°`, counts: [['branches', T.br.filter(b => b.L > 0).length], ['leaves', leaves], ['tets', M.tets.length / 4], ['verts', M.pts.length / 4]], rows },
     });
   }
 
-  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA };
+  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS };
   if (typeof module !== 'undefined') module.exports = root.Objects;
 })(typeof window !== 'undefined' ? window : globalThis);

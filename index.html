@@ -72,6 +72,14 @@
   .row { display: grid; grid-template-columns: 74px 1fr 42px; align-items: center; gap: 8px; font-size: 13px; }
   .row select { padding: 4px 6px; grid-column: 2 / 4; }
   .row.check { grid-template-columns: 74px 1fr; }
+  .row.wide { grid-template-columns: 74px 1fr; align-items: start; }
+  .row.wide label { padding-top: 5px; }
+  .row input[type=text], .row textarea { font: 12px/1.45 var(--mono); color: var(--fg); background: var(--chip); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; width: 100%; box-sizing: border-box; min-width: 0; }
+  .row textarea { resize: vertical; min-height: 4.6em; white-space: pre; overflow-x: auto; }
+  .row input[type=text]:focus, .row textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row .help { grid-column: 1 / -1; margin: 0; font: 11px/1.6 var(--mono); color: var(--muted); }
+  .row .help b { color: var(--fg); font-weight: 600; }
+  dd code { font: 11.5px/1.5 var(--mono); word-break: break-all; }
   .row output { font: 12px var(--mono); text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
   input[type=range] { width: 100%; accent-color: var(--accent); }
   .checks { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; }

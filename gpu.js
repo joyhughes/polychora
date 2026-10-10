@@ -362,7 +362,7 @@
       vec4 P = tex(b + 5), q = tex(b + 7);
       if (!hitBall(tex(b + 6), q.x, Y0, Yd)) { i = int(P.w); continue; }
       vec4 base = tex(b), a = tex(b + 1);
-      if (hitBall(base + 0.5 * P.x * a, q.y, Y0, Yd)) {
+      if (P.y > 0.0 && hitBall(base + 0.5 * P.x * a, q.y, Y0, Yd)) {
         vec4 e1 = tex(b + 2), e2 = tex(b + 3), e3 = tex(b + 4);
         float lo = -1e9, hi = 1e9; int ilo = 0, ihi = 0, id = i * 40;
         float ab = dot(a, base), kap = (P.z - P.y) / P.x;

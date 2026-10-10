@@ -12,7 +12,7 @@
   OBJECTS.push({ key: 'hopf', label: 'Hopf fibration', group: 'Surfaces & fibrations in S³', kind: 'hopf', s3: true });
   for (const [k, F] of Object.entries(O.FRACTALS)) OBJECTS.push({ key: 'frac:' + k, label: F.name, group: 'Sierpinski fractals', kind: 'frac', id: k });
   OBJECTS.push({ key: 'mountain', label: 'Fractal mountain', group: 'Fractal nature', kind: 'mtn' });
-  OBJECTS.push({ key: 'tree', label: 'Fractal tree', group: 'Fractal nature', kind: 'tree' });
+  OBJECTS.push({ key: 'tree', label: 'L-system tree', group: 'Fractal nature', kind: 'tree' });
 
   const rings = p => p.pattern === 'rings';
   function paramDefs(o) {
@@ -49,18 +49,24 @@
       { id: 'sea', label: 'Sea level', min: -0.48, max: 0.4, step: 0.01, def: -0.25, fmt: 2 },
       { id: 'snow', label: 'Snow line', min: 0.3, max: 1, step: 0.01, def: 0.72, fmt: 2, title: 'Share of the way from sea level to the summit' },
     ];
-    if (o.kind === 'tree') return [
-      { id: 'forks', label: 'Forks', min: 2, max: 4, step: 1, def: 4, title: 'Branches at each fork: toward the corners of a segment, triangle or tetrahedron' },
-      { id: 'depth', label: 'Depth', min: 1, max: 6, step: 1, def: 4 },
-      { id: 'spread', label: 'Spread', min: 10, max: 80, step: 1, def: 35, unit: '°' },
-      { id: 'ratio', label: 'Length ratio', min: 0.45, max: 0.85, step: 0.01, def: 0.66, fmt: 2 },
-      { id: 'twist', label: 'Twist', min: 0, max: 120, step: 1, def: 40, unit: '°', title: 'Turns each fork about the diagonal of the 3-space across the branch, so later forks reach into w' },
-      { id: 'thick', label: 'Thickness', min: 0.03, max: 0.2, step: 0.005, def: 0.09, fmt: 3 },
-      { id: 'wild', label: 'Wildness', min: 0, max: 1, step: 0.01, def: 0.12, fmt: 2, title: 'Random changes to each branch’s angle, length and turn' },
-      { id: 'seed', label: 'Seed', min: 1, max: 200, step: 1, def: 3, show: p => p.wild > 0 },
-      { id: 'leaves', label: 'Leaves', type: 'check', def: true },
-      { id: 'leafSize', label: 'Leaf size', min: 0.03, max: 0.3, step: 0.005, def: 0.09, fmt: 3, show: p => p.leaves },
-    ];
+    if (o.kind === 'tree') {
+      const P0 = O.LSYS_PRESETS.tetra, edited = { custom: true };
+      return [
+        { id: 'preset', label: 'Preset', type: 'select', options: [...Object.entries(O.LSYS_PRESETS).map(([k, v]) => [k, v.name]), ['custom', 'Your own']], def: 'tetra',
+          apply: (prm, v) => { const q = O.LSYS_PRESETS[v]; if (q) { for (const k of ['axiom', 'rules', 'iter', 'angle', 'lenRatio', 'widthRatio', 'thick', 'leaves', 'leafSize']) prm[k] = q[k]; } } },
+        { id: 'axiom', label: 'Axiom', type: 'text', def: P0.axiom, edits: edited },
+        { id: 'rules', label: 'Rules', type: 'textarea', def: P0.rules, edits: edited, title: 'One rule per line, as X = …. Several rules for one symbol: each rewrite picks one at random' },
+        { id: 'help', type: 'help', html: `<b>F</b> branch · <b>f</b> move · <b>[ ]</b> fork · <b>L</b> leaf<br><b>+ −</b> turn · <b>&amp; ^</b> pitch · <b>&lt; &gt;</b> turn into w<br><b>\\ /</b> roll · <b>{ }</b> roll toward w · <b>|</b> about-face<br><b>!</b> thinner · <b>"</b> shorter · <b>+(30)</b> its own angle` },
+        { id: 'iter', label: 'Iterations', min: 0, max: 8, step: 1, def: P0.iter },
+        { id: 'angle', label: 'Angle', min: 0, max: 120, step: 0.5, def: P0.angle, fmt: 1, unit: '°' },
+        { id: 'lenRatio', label: 'Length " ×', min: 0.3, max: 1, step: 0.01, def: P0.lenRatio, fmt: 2, title: 'How much each " shortens the step' },
+        { id: 'widthRatio', label: 'Width ! ×', min: 0.3, max: 1, step: 0.01, def: P0.widthRatio, fmt: 2, title: 'How much each ! thins the branches' },
+        { id: 'thick', label: 'Thickness', min: 0.01, max: 0.6, step: 0.005, def: P0.thick, fmt: 3, title: 'Branch radius at the start, in steps' },
+        { id: 'seed', label: 'Seed', min: 1, max: 200, step: 1, def: 3, show: prm => /^(\S)\s*(=|->|→)[^]*\n\s*\1\s*(=|->|→)/m.test(prm.rules), title: 'For rules that choose at random' },
+        { id: 'leaves', label: 'Tip leaves', type: 'check', def: P0.leaves, title: 'A 16-cell on every branch with nothing drawn after it (L puts one anywhere)' },
+        { id: 'leafSize', label: 'Leaf size', min: 0.02, max: 2, step: 0.01, def: P0.leafSize, fmt: 2, title: 'In steps' },
+      ];
+    }
     const F = O.FRACTALS[o.id];
     const defs = [{ id: 'depth', label: 'Depth', min: 0, max: F.maxDepth, step: 1, def: F.depth }];
     if (F.ratio) defs.push({ id: 'ratio', label: 'Ratio r', min: 0.25, max: 0.62, step: 0.005, def: F.ratioDefault ?? 0.5, fmt: 3 });
@@ -117,14 +123,31 @@
     box.innerHTML = '';
     for (const d of defs) {
       const r = document.createElement('div'), id = 'prm-' + d.id;
-      r.className = 'row' + (d.type === 'check' ? ' check' : ''); r.dataset.id = d.id; if (d.title) r.title = d.title;
-      if (d.type === 'select') r.innerHTML = `<label for="${id}">${d.label}</label><select id="${id}">${d.options.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select>`;
+      r.className = 'row' + (d.type === 'check' ? ' check' : d.type === 'text' || d.type === 'textarea' || d.type === 'help' ? ' wide' : ''); r.dataset.id = d.id; if (d.title) r.title = d.title;
+      if (d.type === 'help') { r.innerHTML = `<p class="help">${d.html}</p>`; box.appendChild(r); continue; }
+      if (d.type === 'text') r.innerHTML = `<label for="${id}">${d.label}</label><input type="text" id="${id}" spellcheck="false" autocomplete="off">`;
+      else if (d.type === 'textarea') r.innerHTML = `<label for="${id}">${d.label}</label><textarea id="${id}" rows="3" spellcheck="false"></textarea>`;
+      else if (d.type === 'select') r.innerHTML = `<label for="${id}">${d.label}</label><select id="${id}">${d.options.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select>`;
       else if (d.type === 'check') r.innerHTML = `<label for="${id}">${d.label}</label><input type="checkbox" id="${id}">`;
       else r.innerHTML = `<label for="${id}">${d.label}</label><input type="range" id="${id}" min="${d.min}" max="${d.max}" step="${d.step}"><output></output>`;
       box.appendChild(r);
-      const inp = r.querySelector('input,select');
+      const inp = r.querySelector('input,select,textarea');
       if (d.type === 'check') inp.checked = prm[d.id]; else inp.value = prm[d.id];
       const out = r.querySelector('output'); if (out) out.value = fmtVal(d, prm[d.id]);
+      if (d.type === 'text' || d.type === 'textarea') {
+        // rebuild a moment after typing stops; editing a preset's text makes it your own
+        let timer = 0;
+        inp.addEventListener('input', () => {
+          clearTimeout(timer);
+          timer = setTimeout(() => {
+            prm[d.id] = inp.value;
+            if (d.edits && prm.preset !== 'custom') { prm.preset = 'custom'; const ps = $('params').querySelector('[data-id="preset"] select'); if (ps) ps.value = 'custom'; }
+            refreshParamVisibility(); dirty = true;
+          }, 350);
+        });
+        continue;
+      }
+      if (d.apply) { inp.addEventListener('change', () => { prm[d.id] = inp.value; d.apply(prm, inp.value); buildParamUI(); dirty = true; }); continue; }
       inp.addEventListener(d.type === 'range' || !d.type ? 'input' : 'change', () => {
         prm[d.id] = d.type === 'check' ? inp.checked : d.type === 'select' ? inp.value : +inp.value;
         if (out) out.value = fmtVal(d, prm[d.id]);
@@ -284,7 +307,7 @@
   $('presetIso').onclick = preset([0.35, 0, 0, 0, 0, 0.35]);
   addEventListener('keydown', e => {
     const t = e.target;
-    if (t.tagName === 'SELECT' || (t.tagName === 'INPUT' && !['range', 'checkbox', 'radio'].includes(t.type))) return;
+    if (t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !['range', 'checkbox', 'radio'].includes(t.type))) return;
     if (e.key === ' ') { e.preventDefault(); state.playing = !state.playing; syncUI(); }
     else if (e.key === '[') step(-1);
     else if (e.key === ']') step(1);
