@@ -96,10 +96,22 @@
     return { type: T_TREE, texels: tx, c1: br.length, c2: 0, prm: [depth, 0, 0, 0] };
   }
 
-  // black hole: the space as a thin shell about r = rₛ + w²/(4rₛ)
+  // black hole: a header (r₊, a, M, depth of the rim; reach, both sheets, shift, table size; steepest |∇r|), then for even steps of the
+  // depth w the radius r_w where the space sits at that depth, and dr_w/dw
   function blackHoleData(prm) {
-    const S = O.blackHoleShape(prm);
-    return { type: T_BH, texels: [], c1: 0, c2: 0, prm: [S.rs, S.R, S.both ? 1 : 0, S.shift] };
+    const G = O.blackHoleShape(prm), N = 512, tx = [[G.rp, G.a, G.M, G.wmax], [G.R, G.both ? 1 : 0, G.shift, N + 1]];
+    // the steepest |∇r| anywhere: 1/ρ'(r₊) on the equator at the horizon (1 when a = 0)
+    const drho = (G.rp - G.M * G.a * G.a / (G.rp * G.rp)) / G.rho(G.rp);
+    tx.push([Math.max(1, 1 / Math.max(1e-3, drho)), 0, 0, 0]);
+    let j = 0;
+    for (let i = 0; i <= N; i++) {
+      const w = G.wmax * i / N;
+      while (j < G.NS - 1 && G.W[j + 1] < w) j++;
+      const t = G.W[j + 1] > G.W[j] ? Math.min(1, Math.max(0, (w - G.W[j]) / (G.W[j + 1] - G.W[j]))) : 0;
+      const sv = G.smax * (j + t) / G.NS, dWds = G.dW[j] + (G.dW[j + 1] - G.dW[j]) * t;
+      tx.push([G.rp + sv * sv, Math.min(1e3, 2 * sv / Math.max(1e-9, dWds)), 0, 0]);
+    }
+    return { type: T_BH, texels: tx, c1: 0, c2: 0, prm: [G.rp, G.R, G.both ? 1 : 0, G.shift] };
   }
 
   function shapeData(o, prm, time) {
@@ -270,13 +282,49 @@
     }
     return best - uPrm[k].x;
   }
-  // distance (to first order) from the black hole's space r = rₛ + w²/(4rₛ), cut off at the reach and, for one sheet, at w = 0
+  // the black hole's space: Boyer–Lindquist r of a point solves (x² + z²)/ρ(r)² + y²/r² = 1 (Newton's method), then
+  // the distance is, to first order, |w ∓ W(r)| / √(1 + W'(r)²); cut off at the reach and, for one sheet, at w = 0
+  float bhR(int k, vec3 p) {
+    vec4 h = tex(uOff[k]); float a = h.y, M = h.z, q = dot(p.xz, p.xz), yy = p.y * p.y, r = max(length(p), 1e-4);
+    if (a <= 0.0) return r;
+    // for r ≥ r* = (Ma²)^⅓, where ρ is smallest, the left side falls as r grows, and at r = |p| it is at most 1
+    // (ρ ≥ r), so the root lies in [r*, |p|]; a point with no root there sits inside the horizon, at r*
+    float lo = pow(M * a * a, 1.0 / 3.0), hi = max(r, lo);
+    for (int i = 0; i < 14; i++) {
+      float m = 0.5 * (lo + hi), rho2 = m * m + a * a + 2.0 * M * a * a / m;
+      if (q / rho2 + yy / (m * m) > 1.0) lo = m; else hi = m;
+    }
+    return 0.5 * (lo + hi);
+  }
   float bhD(int k, vec4 y) {
-    vec4 p = uPrm[k]; float rs = p.x, w = y.w - p.w, r = length(y.xyz);
-    float g = (r - rs - w * w / (4.0 * rs)) / sqrt(1.0 + w * w / (4.0 * rs * rs));
-    float d = abs(g) - 0.008;
-    d = max(d, r - p.y);
-    if (p.z < 0.5) d = max(d, -w);
+    vec4 h = tex(uOff[k]), h1 = tex(uOff[k] + 1);
+    float rp = h.x, a = h.y, M = h.z, wmax = h.w, R = h1.x, w = y.w - h1.z, wa = abs(w);
+    int n = int(h1.w);
+    float u = clamp(wa / max(wmax, 1e-6), 0.0, 1.0) * float(n - 1);
+    int j = min(n - 2, int(floor(u))); float f = u - float(j);
+    vec4 A = tex(uOff[k] + 3 + j), B = tex(uOff[k] + 4 + j);
+    float rw = mix(A.x, B.x, f), drw = mix(A.y, B.y, f), gmax = tex(uOff[k] + 2).x;
+    // The space is r = r_w(|w|) (for a = 0, r = r₊ + w²/(4r₊) exactly). Every point of it lies outside the horizon's
+    // spheroid (semi-axes 2M across the spin axis, r₊ along it); inside that, the scaled radius r₊·e stands in for r,
+    // meeting r(p) on the spheroid, and equal to |p| when a = 0.
+    float q = dot(y.xz, y.xz), yy = y.y * y.y, e = sqrt(q / (4.0 * M * M) + yy / (rp * rp)), r, gr;
+    if (e < 1.0) {
+      r = rp * e;
+      gr = rp * length(vec3(y.x / (4.0 * M * M), y.y / (rp * rp), y.z / (4.0 * M * M))) / max(e, 1e-6);
+    } else {
+      r = bhR(k, y.xyz); gr = 1.0;
+      if (a > 0.0) {
+        // the gradient of r(p), from differentiating q/ρ(r)² + y²/r² = 1
+        float rho2 = r * r + a * a + 2.0 * M * a * a / r;
+        vec3 gp = vec3(2.0 * y.x / rho2, 2.0 * y.y / (r * r), 2.0 * y.z / rho2);
+        gr = length(gp) / max(q * (2.0 * r - 2.0 * M * a * a / (r * r)) / (rho2 * rho2) + 2.0 * yy / (r * r * r), 1e-4);
+      }
+    }
+    // steps use the steepest gradient anywhere, so they never overshoot where r changes faster nearer the horizon
+    gr = max(gr, gmax);
+    float d = abs(r - rw) / sqrt(gr * gr + drw * drw) - 0.008;
+    d = max(d, max(r - R, wa - wmax));
+    if (h1.y < 0.5) d = max(d, -w);
     return d;
   }
   float tubeD(int k, vec4 y, out int fi) { fi = 0; return uType[k] == ${T_TORUS} ? torusD(k, y) : uType[k] == ${T_BH} ? bhD(k, y) : hopfD(k, y, fi); }
@@ -286,7 +334,7 @@
     if (D <= 0.0 || A < 1e-12) return;
     float sq = sqrt(D), t = (-B - sq) / A, tEnd = (-B + sq) / A, sp = sqrt(A);
     bool inside = false; float tin = t; int fi = 0, fin = 0;
-    for (int s = 0; s < 200; s++) {
+    for (int s = 0; s < 400; s++) {
       if (t > tEnd) break;
       float d = tubeD(k, Y0 + t * Yd, fi);
       if (!inside && d < 1e-4) { inside = true; tin = t; fin = fi; }
@@ -441,9 +489,14 @@
                 tubeD(k, y + vec4(0, 0, h, 0), fi) - tubeD(k, y - vec4(0, 0, h, 0), fi), tubeD(k, y + vec4(0, 0, 0, h), fi) - tubeD(k, y - vec4(0, 0, 0, h), fi));
       if (ty == ${T_HOPF}) { tubeD(k, y, fi); own = vec4(hopfColor(tex(uOff[k] + 2 * fi)), 1.0); }
       else if (ty == ${T_BH}) {
-        float g = clamp(sqrt(max(0.0, 1.0 - uPrm[k].x / max(1e-6, length(y.xyz))) ), 0.0, 1.0) * 4.0;
+        // the lapse √(ΣΔ/A), as in the mesh, and violet inside the ergosphere
+        vec4 h = tex(uOff[k]); float a = h.y, M = h.z, r = max(bhR(k, y.xyz), h.x), c = clamp(y.y / r, -1.0, 1.0);
+        float D = r * r - 2.0 * M * r + a * a, S2 = r * r + a * a * c * c, A2 = (r * r + a * a) * (r * r + a * a) - a * a * D * (1.0 - c * c);
+        float g = clamp(sqrt(max(0.0, S2 * D / A2)), 0.0, 1.0) * 4.0;
         vec3 c0 = vec3(0.35, 0.05, 0.06), c1 = vec3(0.85, 0.25, 0.1), c2 = vec3(0.96, 0.66, 0.26), c3 = vec3(0.72, 0.8, 0.92), c4 = vec3(0.42, 0.56, 0.9);
-        own = vec4(g < 1.0 ? mix(c0, c1, g) : g < 2.0 ? mix(c1, c2, g - 1.0) : g < 3.0 ? mix(c2, c3, g - 2.0) : mix(c3, c4, g - 3.0), 1.0);
+        vec3 cc = g < 1.0 ? mix(c0, c1, g) : g < 2.0 ? mix(c1, c2, g - 1.0) : g < 3.0 ? mix(c2, c3, g - 2.0) : mix(c3, c4, g - 3.0);
+        if (a > 0.0 && r < M + sqrt(max(0.0, M * M - a * a * c * c))) cc = cc * 0.45 + vec3(0.58, 0.36, 0.92) * 0.55;
+        own = vec4(cc, 1.0);
       }
       else {
         float th = atan(y.y, y.x), ph = atan(y.w, y.z);

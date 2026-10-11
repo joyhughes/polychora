@@ -591,9 +591,62 @@
     const t = Math.max(0, Math.min(1, g)) * (CLOCK.length - 1), i = Math.min(CLOCK.length - 2, Math.floor(t)), f = t - i;
     return CLOCK[i].map((v, q) => v + (CLOCK[i + 1][q] - v) * f);
   }
+  // The geometry for both cases (M = rₛ/2, a = spin·M; a = 0 is Schwarzschild). Boyer–Lindquist r runs from the
+  // horizon r₊ = M + √(M² − a²) out to the reach; s = √(r − r₊) is smooth through the horizon.
+  // On the equator the space ds² = r²/Δ dr² + ρ(r)² dφ², ρ² = r² + a² + 2Ma²/r, embeds exactly as a surface of revolution
+  // with circle radius ρ(r) and depth W(r) = ∫ √(g_rr − ρ'²) dr. The 3D space is drawn over the directions (θ from the
+  // spin axis y, and φ) as (ρ sinθ cosφ, r cosθ, ρ sinθ sinφ, W(r)): exact at a = 0, and exact on the equator for any spin.
+  let bhKey = '', bhVal = null;
   function blackHoleShape(prm) {
-    const rs = prm.rs, R = prm.reach, wmax = 2 * Math.sqrt(rs * (R - rs)), both = !!prm.both;
-    return { rs, R, wmax, both, w0: both ? -wmax : 0, w1: wmax, shift: both ? 0 : -wmax / 2 };
+    const spin = prm.kerr ? Math.min(0.99, prm.spin) : 0, key = [prm.rs, prm.reach, spin, !!prm.both].join();
+    if (key === bhKey) return bhVal;
+    const M = prm.rs / 2, a = spin * M, rp = M + Math.sqrt(M * M - a * a), rm = M - Math.sqrt(M * M - a * a), R = Math.max(prm.reach, rp * 1.05);
+    const rho2 = r => r * r + a * a + 2 * M * a * a / r, rho = r => Math.sqrt(rho2(r)), drho = r => (r - M * a * a / (r * r)) / rho(r);
+    // dW/ds = 2√(r²/(r − r₋) − s² ρ'²), finite at the horizon; integrated with Simpson's rule on a fine grid
+    const smax = Math.sqrt(R - rp), NS = 512, W = new Float64Array(NS + 1), dW = new Float64Array(NS + 1);
+    let unembeddable = false;
+    const f = s => { const r = rp + s * s, v = r * r / (r - rm) - s * s * drho(r) ** 2; if (v < 0) unembeddable = true; return 2 * Math.sqrt(Math.max(0, v)); };
+    for (let j = 0; j <= NS; j++) dW[j] = f(smax * j / NS);
+    for (let j = 1; j <= NS; j++) { const s0 = smax * (j - 1) / NS, s1 = smax * j / NS; W[j] = W[j - 1] + (s1 - s0) / 6 * (dW[j - 1] + 4 * f((s0 + s1) / 2) + dW[j]); }
+    const Ws = s => { const u = Math.min(NS, Math.max(0, Math.abs(s) / smax * NS)), j = Math.min(NS - 1, Math.floor(u)), t = u - j; return Math.sign(s || 1) * (W[j] + (W[j + 1] - W[j]) * t); };
+    const Wr = r => Ws(Math.sqrt(Math.max(0, r - rp)));
+    const wmax = W[NS], both = !!prm.both;
+    // the clock rate of an observer swept round with the space (the lapse √(ΣΔ/A)), and the ergosphere r_E = M + √(M² − a² cos²θ)
+    const lapse = (r, c) => { const D = r * r - 2 * M * r + a * a, S2 = r * r + a * a * c * c, A = (r * r + a * a) ** 2 - a * a * D * (1 - c * c); return Math.sqrt(Math.max(0, S2 * D / A)); };
+    const ergo = c => M + Math.sqrt(Math.max(0, M * M - a * a * c * c));
+    // circular photon orbits on the equator: prograde and retrograde
+    const rph = sg => 2 * M * (1 + Math.cos(2 / 3 * Math.acos(-sg * a / M)));
+    bhKey = key;
+    bhVal = { M, a, spin, rp, rm, R, rho, Ws, Wr, W, dW, NS, smax, wmax, both, shift: both ? 0 : -wmax / 2, lapse, ergo, rph, unembeddable };
+    return bhVal;
+  }
+  // a photon in the equatorial plane of a Kerr black hole, from far away along +x at height h above the axis.
+  // With Mino time τ (dλ = r² dτ): (dr/dτ)² = R(r) = (r² + a² − ab)² − Δ(b − a)², dφ/dτ = (b − a) + a(r² + a² − ab)/Δ,
+  // where b = L/E = −h, and d²r/dτ² = R'(r)/2 carries the ray smoothly through its closest approach.
+  function kerrPhoton(G, h) {
+    const { M, a, rp, R } = G, b = -h, Rf = r => (r * r + a * a - a * b) ** 2 - (r * r - 2 * M * r + a * a) * (b - a) ** 2;
+    const dRf = r => 4 * r * (r * r + a * a - a * b) - (2 * r - 2 * M) * (b - a) ** 2;
+    const dphi = r => { const D = r * r - 2 * M * r + a * a; return (b - a) + a * (r * r + a * a - a * b) / D; };
+    let r = R, v = -Math.sqrt(Math.max(0, Rf(R))), phi = Math.atan2(h, -Math.sqrt(Math.max(0, R * R - h * h)));
+    const pts = [[r, phi]];
+    let fell = false;
+    for (let n = 0; n < 20000; n++) {
+      const dt = 0.006 / (Math.abs(v) / r + Math.abs(dphi(r)) + 1e-9);
+      // RK4 on (r, v, φ)
+      const k1r = v, k1v = dRf(r) / 2, k1p = dphi(r);
+      const r2 = r + dt / 2 * k1r, v2 = v + dt / 2 * k1v, k2r = v2, k2v = dRf(r2) / 2, k2p = dphi(r2);
+      const r3 = r + dt / 2 * k2r, v3 = v + dt / 2 * k2v, k3r = v3, k3v = dRf(r3) / 2, k3p = dphi(r3);
+      const r4 = r + dt * k3r, v4 = v + dt * k3v, k4r = v4, k4v = dRf(r4) / 2, k4p = dphi(r4);
+      const rP = r, pP = phi;
+      r += dt / 6 * (k1r + 2 * k2r + 2 * k3r + k4r); v += dt / 6 * (k1v + 2 * k2v + 2 * k3v + k4v); phi += dt / 6 * (k1p + 2 * k2p + 2 * k3p + k4p);
+      // keep v² = R(r) exactly, except near a turning point (R small), where v has to be free to change sign
+      const Rn = Rf(r);
+      if (Rn > 1e-4 * r ** 4) v = (v < 0 ? -1 : 1) * Math.sqrt(Rn);
+      const end = r <= rp * (1 + 2e-3) ? rp * (1 + 2e-3) : r >= R && v > 0 ? R : 0;
+      if (end) { pts.push([end, pP + (phi - pP) * (end - rP) / (r - rP)]); fell = end !== R; break; }
+      pts.push([r, phi]);
+    }
+    return { pts, fell };
   }
   // photon path in its plane, from far away along +x with impact parameter b; returns plane points [x, y] and whether it fell in
   function photon(rs, R, b) {
@@ -618,67 +671,89 @@
     return { pts, fell };
   }
   function blackHole(prm) {
-    const S = blackHoleShape(prm), { rs, R, w0, w1, shift } = S, M = new Mesh();
-    const rOf = w => rs + w * w / (4 * rs), wOf = r => 2 * Math.sqrt(Math.max(0, rs * (r - rs)));
-    // colour by the clock rate √(1 − rₛ/r): red at the horizon, white-blue far away
-    const shade = r => clockColor(Math.sqrt(Math.max(0, 1 - rs / r)));
-    const { v: sph, f: tri } = icosphere(prm.detail), L = 6 + 8 * prm.detail * (S.both ? 2 : 1);
-    const layer = [];
-    for (let k = 0; k <= L; k++) {
-      const w = w0 + (w1 - w0) * k / L, r = rOf(w);
-      layer.push(sph.map(n => M.pt([r * n[0], r * n[1], r * n[2], w + shift])));
-    }
+    const G = blackHoleShape(prm), { M, a, rp, R, rho, Ws, Wr, shift, both } = G, Mesh_ = new Mesh(), MM = Mesh_;
+    const ERGO = [0.58, 0.36, 0.92];
+    // colour by the lapse, tinted violet inside the ergosphere
+    const shade = (r, c) => { const col = clockColor(G.lapse(r, c)); return a > 0 && r < G.ergo(c) ? col.map((v, q) => v * 0.45 + ERGO[q] * 0.55) : col; };
+    const pos = (r, n, w) => [rho(r) * n[0], r * n[1], rho(r) * n[2], w + shift];
+    const { v: sph, f: tri } = icosphere(prm.detail), L = 6 + 8 * prm.detail * (both ? 2 : 1);
+    const s0 = both ? -G.smax : 0, layer = [], sOf = k => s0 + (G.smax - s0) * k / L, rOfS = s => rp + s * s;
+    for (let k = 0; k <= L; k++) { const s = sOf(k), r = rOfS(s), w = Ws(s); layer.push(sph.map(n => MM.pt(pos(r, n, w)))); }
     // each triangle of the sphere times each layer is a prism, split by vertex order so neighbours agree
     for (let k = 0; k < L; k++) {
-      const w = w0 + (w1 - w0) * (k + 0.5) / L, col = shade(rOf(w));
+      const r = rOfS((sOf(k) + sOf(k + 1)) / 2);
       for (const t of tri) {
-        const [a, b, c] = t.slice().sort((p, q) => p - q), A = layer[k], B = layer[k + 1];
-        M.tet(A[a], A[b], A[c], B[a], col); M.tet(A[b], A[c], B[a], B[b], col); M.tet(A[c], B[a], B[b], B[c], col);
+        const [p, q, u] = t.slice().sort((x, y) => x - y), A = layer[k], B = layer[k + 1];
+        const c = (sph[p][1] + sph[q][1] + sph[u][1]) / 3, col = shade(r, c);
+        MM.tet(A[p], A[q], A[u], B[p], col); MM.tet(A[q], A[u], B[p], B[q], col); MM.tet(A[u], B[p], B[q], B[u], col);
       }
     }
     // the classic picture: the equatorial plane y = 0 as a funnel, with rings and spokes
+    const eq = (r, ph, w) => [rho(r) * Math.cos(ph), 0, rho(r) * Math.sin(ph), w + shift];
     if (prm.funnel) {
       const NA = 72, idx = [];
-      for (let k = 0; k <= L; k++) { const w = w0 + (w1 - w0) * k / L, r = rOf(w); idx.push(Array.from({ length: NA }, (_, j) => M.pt([r * Math.cos(2 * Math.PI * j / NA), 0, r * Math.sin(2 * Math.PI * j / NA), w + shift]))); }
+      for (let k = 0; k <= L; k++) { const s = sOf(k), r = rOfS(s), w = Ws(s); idx.push(Array.from({ length: NA }, (_, j) => MM.pt(eq(r, 2 * Math.PI * j / NA, w)))); }
       for (let k = 0; k < L; k++) {
-        const col = shade(rOf(w0 + (w1 - w0) * (k + 0.5) / L));
-        for (let j = 0; j < NA; j++) { const j2 = (j + 1) % NA; M.tri(idx[k][j], idx[k + 1][j], idx[k + 1][j2], col); M.tri(idx[k][j], idx[k + 1][j2], idx[k][j2], col); }
+        const col = shade(rOfS((sOf(k) + sOf(k + 1)) / 2), 0);
+        for (let j = 0; j < NA; j++) { const j2 = (j + 1) % NA; MM.tri(idx[k][j], idx[k + 1][j], idx[k + 1][j2], col); MM.tri(idx[k][j], idx[k + 1][j2], idx[k][j2], col); }
       }
-      for (let k = 0; k <= L; k += 2) for (let j = 0; j < NA; j++) M.edge(idx[k][j], idx[k][(j + 1) % NA]);
-      for (let j = 0; j < NA; j += 6) for (let k = 0; k < L; k++) M.edge(idx[k][j], idx[k + 1][j]);
+      for (let k = 0; k <= L; k += 2) for (let j = 0; j < NA; j++) MM.edge(idx[k][j], idx[k][(j + 1) % NA]);
+      for (let j = 0; j < NA; j += 6) for (let k = 0; k < L; k++) MM.edge(idx[k][j], idx[k + 1][j]);
     }
-    // the horizon and the photon sphere, as rings on the funnel
-    const ring = (r, col, side) => { const w = side * wOf(r), pts = []; for (let j = 0; j < 120; j++) { const a = 2 * Math.PI * j / 120; pts.push([r * Math.cos(a), 0, r * Math.sin(a), w + shift]); } M.curve(pts, true, col); };
-    ring(rs, [1, 0.3, 0.12], 0);
-    if (1.5 * rs < R) { ring(1.5 * rs, [0.98, 0.75, 0.3], 1); if (S.both) ring(1.5 * rs, [0.98, 0.75, 0.3], -1); }
-    // light rays: a beam along +x, in planes through the x axis
-    let fell = 0;
-    const bc = 1.5 * Math.sqrt(3) * rs;
-    for (let pl = 0; pl < prm.planes; pl++) {
-      const th = Math.PI * pl / prm.planes, ny = Math.sin(th), nz = Math.cos(th);
+    // rings on the funnel: horizon, ergosphere, photon orbits
+    const ring = (r, col, side) => { const w = side * Wr(r), pts = []; for (let j = 0; j < 120; j++) pts.push(eq(r, 2 * Math.PI * j / 120, w)); MM.curve(pts, true, col); };
+    ring(rp, [1, 0.3, 0.12], 0);
+    const sides = both ? [1, -1] : [1];
+    if (a > 0 && 2 * M < R) for (const sd of sides) ring(2 * M, ERGO, sd);
+    const orbits = a > 0 ? [G.rph(1), G.rph(-1)] : [3 * M];
+    for (const ro of orbits) if (ro < R) for (const sd of sides) ring(ro, [0.98, 0.75, 0.3], sd);
+    // light rays: a beam along +x; for a spinning hole, in the equatorial plane only (other planes need the full Carter motion)
+    let fell = 0, nr = 0;
+    const bc = a > 0 ? 3 * Math.sqrt(3) * M : 1.5 * Math.sqrt(3) * prm.rs, planes = a > 0 ? 1 : prm.planes;
+    for (let pl = 0; pl < planes; pl++) {
+      const th = Math.PI * pl / planes, ny = Math.sin(th), nz = Math.cos(th);
       for (let i = 0; i < prm.rays; i++) {
-        const b = bc * prm.beam * (prm.rays === 1 ? 1 : (2 * i / (prm.rays - 1) - 1)) || 1e-3 * bc;
-        const ab = Math.abs(b), P = photon(rs, R, Math.max(ab, 1e-4)), sg = b < 0 ? -1 : 1;
-        if (P.fell) fell++;
-        const pts = P.pts.map(([x, y]) => { const r = Math.hypot(x, y); return [x, sg * y * ny, sg * y * nz, wOf(r) + shift]; });
-        const near = Math.min(1, Math.abs(ab - bc) / bc * 4);
-        M.curve(pts, false, P.fell ? [0.95, 0.35, 0.72] : [0.98 - 0.1 * (1 - near), 0.98 - 0.04 * (1 - near), 1]);
+        const h = bc * prm.beam * (prm.rays === 1 ? 1 : (2 * i / (prm.rays - 1) - 1)) || 1e-3 * bc;
+        let pts, f;
+        if (a > 0) {
+          const P = kerrPhoton(G, h); f = P.fell;
+          pts = P.pts.map(([r, ph]) => eq(r, ph, Wr(r)));
+        } else {
+          const P = photon(prm.rs, R, Math.max(Math.abs(h), 1e-4)), sg = h < 0 ? -1 : 1; f = P.fell;
+          pts = P.pts.map(([x, y]) => { const r = Math.hypot(x, y); return [x, sg * y * ny, sg * y * nz, Wr(r) + shift]; });
+        }
+        // keep a point only once it has moved on visibly (rays falling in wind tightly near the horizon)
+        const kept = [pts[0]];
+        for (let q = 1; q < pts.length; q++) { const l = kept[kept.length - 1], p = pts[q]; if (q === pts.length - 1 || Math.hypot(p[0] - l[0], p[1] - l[1], p[2] - l[2], p[3] - l[3]) > 0.006) kept.push(p); }
+        pts = kept;
+        if (f) fell++;
+        nr++;
+        const near = Math.min(1, Math.abs(Math.abs(h) - bc) / bc * 4);
+        MM.curve(pts, false, f ? [0.95, 0.35, 0.72] : [0.98 - 0.1 * (1 - near), 0.98 - 0.04 * (1 - near), 1]);
       }
     }
-    const rows = [
+    const rows = a > 0 ? [
+      ['Space', `the Kerr geometry at one instant, spin a = ${G.spin.toFixed(2)} M (Boyer–Lindquist t = const)`],
+      ['In 4D', 'the equator y = 0 is embedded exactly; off it, each direction takes the equator’s depth at the same r (a picture, not an exact embedding)'],
+      ['Horizon', `r₊ = ${(rp / M).toFixed(3)} M: an oblate spheroid; its equator always has circumference 4πM`],
+      ['Ergosphere', 'violet, out to r = M + √(M² − a² cos²θ): space is dragged round so hard that nothing there can stand still'],
+      ['Light', `equatorial photon orbits at ${(G.rph(1) / M).toFixed(2)} M (with the spin) and ${(G.rph(-1) / M).toFixed(2)} M (against it); rays crossing on the side that turns with the hole get closer before falling in`],
+      ['Colour', 'how fast the clock of an observer carried round with the space runs: red is slow, blue is nearly normal'],
+    ] : [
       ['Space', 'ds² = dr²/(1 − rₛ/r) + r² dΩ², the Schwarzschild geometry at one instant'],
       ['In 4D', 'exactly the hypersurface w = 2√(rₛ(r − rₛ)): Flamm’s paraboloid, one dimension up'],
       ['Colour', 'how fast a clock held still there runs, √(1 − rₛ/r): red is slow, blue is nearly normal'],
-      ['Horizon', `r = rₛ = ${rs.toFixed(2)}, the throat (red ring)${S.both ? '; past it, the second sheet of the Einstein–Rosen bridge' : ''}`],
+      ['Horizon', `r = rₛ = ${prm.rs.toFixed(2)}, the throat (red ring)${both ? '; past it, the second sheet of the Einstein–Rosen bridge' : ''}`],
       ['Light', `photon sphere at 1.5 rₛ (amber ring); white rays escape, bent; pink rays, with impact parameter below (3√3/2) rₛ = ${bc.toFixed(3)}, fall in`],
-      ['Slices', 'y = 0 is the classic funnel; w = const is a sphere; GPU shows the space as a thin shell'],
     ];
-    return M.done({
+    if (G.unembeddable) rows.push(['Note', 'part of the equator cannot be embedded at this spin; its depth is held flat there']);
+    rows.push(['Slices', 'y = 0 is the classic funnel; GPU shows the space as a thin shell']);
+    return MM.done({
       sliceTube: 0, tubeR: prm.tube,
-      info: { name: 'Black hole', sub: `Schwarzschild space in E⁴, rₛ = ${rs.toFixed(2)}`, counts: [['rays', prm.rays * prm.planes], ['fall in', fell], ['tets', M.tets.length / 4], ['layers', L]], rows },
+      info: { name: a > 0 ? 'Kerr black hole' : 'Black hole', sub: a > 0 ? `rotating, a = ${G.spin.toFixed(2)} M, rₛ = ${prm.rs.toFixed(2)}` : `Schwarzschild space in E⁴, rₛ = ${prm.rs.toFixed(2)}`, counts: [['rays', nr], ['fall in', fell], ['tets', MM.tets.length / 4], ['layers', L]], rows },
     });
   }
 
-  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS, blackHole, blackHoleShape, photon };
+  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS, blackHole, blackHoleShape, photon, kerrPhoton };
   if (typeof module !== 'undefined') module.exports = root.Objects;
 })(typeof window !== 'undefined' ? window : globalThis);

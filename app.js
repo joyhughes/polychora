@@ -53,11 +53,13 @@
     if (o.kind === 'bh') return [
       { id: 'rs', label: 'Horizon rₛ', min: 0.08, max: 0.6, step: 0.01, def: 0.28, fmt: 2, title: 'Schwarzschild radius 2GM/c²' },
       { id: 'reach', label: 'Reach', min: 0.7, max: 1.3, step: 0.01, def: 1, fmt: 2, title: 'How far out the space is drawn' },
+      { id: 'kerr', label: 'Rotating', type: 'check', def: false, title: 'A Kerr black hole: spinning, with an ergosphere' },
+      { id: 'spin', label: 'Spin a/M', min: 0.05, max: 0.99, step: 0.01, def: 0.9, fmt: 2, show: p => p.kerr, title: 'Angular momentum per unit mass, as a share of the mass (1 would be extremal)' },
       { id: 'both', label: 'Wormhole', type: 'check', def: false, title: 'Both sheets: the Einstein–Rosen bridge through the horizon' },
       { id: 'detail', label: 'Detail', min: 1, max: 3, step: 1, def: 2 },
       { id: 'funnel', label: 'Funnel', type: 'check', def: true, title: 'The classic embedding diagram: the equatorial plane y = 0' },
       { id: 'rays', label: 'Light rays', min: 0, max: 31, step: 1, def: 15, title: 'Per plane, in a beam along +x' },
-      { id: 'planes', label: 'Ray planes', min: 1, max: 6, step: 1, def: 1, title: 'Planes through the beam’s axis, turned about it' },
+      { id: 'planes', label: 'Ray planes', min: 1, max: 6, step: 1, def: 1, show: p => !p.kerr, title: 'Planes through the beam’s axis, turned about it (a spinning hole keeps its rays on the equator)' },
       { id: 'beam', label: 'Beam width', min: 0.2, max: 3, step: 0.01, def: 1.6, fmt: 2, title: 'Widest impact parameter, in units of the capture limit (3√3/2) rₛ' },
       { id: 'tube', label: 'Ray radius', min: 0.003, max: 0.03, step: 0.001, def: 0.008, fmt: 3 },
     ];
