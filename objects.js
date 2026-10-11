@@ -231,7 +231,7 @@
       ['Voices', `x and y swing through ±${a.toFixed(2)}, z and w through ±${b.toFixed(2)}; each pair a quarter turn apart`],
       ['Pitch', 'each coordinate from −1 to +1 sweeps one octave of its voice'],
       ['Chord', 'x² + y² + z² + w² = 1 at every moment: the four voices always share one unit of “length”'],
-      ['Sound', 'press Sound on (top left of the view); the orbit runs while the spin plays'],
+      ['Sound', 'press Sound on (top left of the view); it plays while the animation runs, and pauses with it or when the tab is hidden'],
     ];
     return M.done({
       sliceTube: prm.tube * 0.6, tubeR: prm.tube,

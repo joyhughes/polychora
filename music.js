@@ -46,6 +46,8 @@
     const w = periodic(name);
     for (const v of voices) { if (typeof w === 'string') v.osc.type = w; else v.osc.setPeriodicWave(w); }
   }
+  // on: the listener asked for sound; live: the chord is moving and visible, so it should be heard now
+  let live = true, quietTimer = 0;
   async function start() {
     const AC = root.AudioContext || root.webkitAudioContext;
     if (!AC) throw new Error('this browser has no Web Audio');
@@ -64,23 +66,36 @@
       });
       waveName = '';
     }
-    await ctx.resume();
     on = true;
+    if (live) await wake();
   }
-  function stop() {
-    on = false;
+  // fade out, then stop the audio clock altogether, so nothing keeps sounding
+  function quiet() {
     if (!ctx) return;
-    master.gain.setTargetAtTime(0, ctx.currentTime, 0.06);
-    setTimeout(() => { if (!on && ctx.state === 'running') ctx.suspend(); }, 400);
+    master.gain.cancelScheduledValues(ctx.currentTime);
+    master.gain.setTargetAtTime(0, ctx.currentTime, 0.04);
+    clearTimeout(quietTimer);
+    quietTimer = setTimeout(() => { if (!(on && live) && ctx.state === 'running') ctx.suspend(); }, 250);
   }
+  async function wake() { clearTimeout(quietTimer); if (ctx && ctx.state !== 'running') await ctx.resume(); }
+  function stop() { on = false; quiet(); }
+  // the page says whether the chord should be heard right now (it pauses with the animation and when hidden)
+  function setLive(v) {
+    if (v === live) return;
+    live = v;
+    if (!on) return;
+    if (v) wake(); else quiet();
+  }
+  // shut everything down when the page goes away
+  function close() { on = false; if (ctx) { ctx.close(); ctx = null; voices = null; } }
   // freqs: four Hz; amps: four weights in [0, 1]; vol: master level in [0, 1]
   function update(freqs, amps, vol, wave, glide) {
-    if (!on || !ctx) return;
+    if (!on || !live || !ctx) return;
     setWave(wave);
     const t = ctx.currentTime, tc = Math.max(0.005, glide);
     voices.forEach((v, k) => { v.osc.frequency.setTargetAtTime(freqs[k], t, tc); v.g.gain.setTargetAtTime(0.22 * amps[k], t, 0.04); });
     master.gain.setTargetAtTime(vol, t, 0.05);
   }
 
-  root.Music = { start, stop, update, frequencies, ratio, noteName, SCALES, get on() { return on; } };
+  root.Music = { start, stop, setLive, close, update, frequencies, ratio, noteName, SCALES, get on() { return on; }, get state() { return ctx ? ctx.state : 'none'; } };
 })(typeof window !== 'undefined' ? window : globalThis);

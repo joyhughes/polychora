@@ -991,6 +991,10 @@
   let chordPhase = 0, chordHud = 0;
   const VOICE_COL = [[0.95, 0.45, 0.35], [0.96, 0.78, 0.3], [0.35, 0.8, 0.7], [0.5, 0.62, 0.98]];
   $('voices').innerHTML = ['x', 'y', 'z', 'w'].map((n, k) => `<b style="color:rgb(${VOICE_COL[k].map(c => Math.round(c * 255)).join(',')})">${n}</b><div class="cb"><i id="vb${k}" style="background:rgb(${VOICE_COL[k].map(c => Math.round(c * 255)).join(',')})"></i></div><span class="nt" id="vn${k}"></span><span id="vf${k}"></span>`).join('');
+  // a hidden tab draws no frames, so the sound is silenced here rather than in the frame loop
+  document.addEventListener('visibilitychange', () => { window.Music.setLive(!document.hidden && state.playing); });
+  addEventListener('pagehide', () => window.Music.close());
+  addEventListener('pageshow', () => { $('soundBtn').setAttribute('aria-pressed', String(window.Music.on)); $('soundBtn').textContent = window.Music.on ? 'Sound off' : 'Sound on'; });
   $('soundBtn').onclick = async () => {
     try {
       if (window.Music.on) window.Music.stop(); else await window.Music.start();
@@ -1009,6 +1013,8 @@
     $('music').hidden = !sh;
     if (!sh) { if (window.Music.on) { window.Music.stop(); $('soundBtn').setAttribute('aria-pressed', 'false'); $('soundBtn').textContent = 'Sound on'; } return; }
     const prm = shapePrm(sh);
+    // heard only while the orbit moves: pausing the animation silences it too
+    window.Music.setLive(state.playing && !document.hidden);
     if (state.playing) chordPhase = (chordPhase + dt * 2 * Math.PI / prm.period) % (2 * Math.PI);
     chordPoint(prm, chordPhase, sh, chordP, chordQ);
     const coords = prm.listen === 'view' ? (() => { const l = Math.hypot(...chordQ) || 1; return [...chordQ].map(v => v / l); })() : [...chordP];
