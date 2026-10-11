@@ -568,6 +568,117 @@
     });
   }
 
-  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS };
+  // ---------------- black hole ----------------
+  // Space around a Schwarzschild black hole at one instant, ds² = dr²/(1 − rₛ/r) + r² dΩ², is curved, but it fits exactly
+  // in flat 4D as the hypersurface w = 2√(rₛ(r − rₛ)) over r = |(x, y, z)| ≥ rₛ: Flamm's paraboloid one dimension up.
+  // Written as r = rₛ + w²/(4rₛ) it is smooth through the horizon r = rₛ (w = 0), where it turns into a second sheet
+  // (w < 0): the Einstein–Rosen bridge. The mesh is a sphere of directions times layers in w, split into tetrahedra.
+  // Light rays follow the photon orbit equation u'' + u = (3/2) rₛ u² (u = 1/r) and are lifted onto the sheet.
+  function icosphere(level) {
+    const v = ICOSA.verts.map(p => p.slice());
+    let f = ICOSA.faces.map(t => t.slice());
+    for (let l = 0; l < level; l++) {
+      const mid = new Map(), nf = [];
+      const m = (a, b) => { const k = a < b ? a * 1e6 + b : b * 1e6 + a; let i = mid.get(k); if (i === undefined) { const p = [0, 1, 2].map(q => v[a][q] + v[b][q]), l2 = Math.hypot(...p); i = v.length; v.push(p.map(x => x / l2)); mid.set(k, i); } return i; };
+      for (const [a, b, c] of f) { const ab = m(a, b), bc = m(b, c), ca = m(c, a); nf.push([a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]); }
+      f = nf;
+    }
+    return { v, f };
+  }
+  // the rate of a clock held still at r, √(1 − rₛ/r): deep red at the horizon, through amber, to blue-white far out
+  const CLOCK = [[0.35, 0.05, 0.06], [0.85, 0.25, 0.1], [0.96, 0.66, 0.26], [0.72, 0.8, 0.92], [0.42, 0.56, 0.9]];
+  function clockColor(g) {
+    const t = Math.max(0, Math.min(1, g)) * (CLOCK.length - 1), i = Math.min(CLOCK.length - 2, Math.floor(t)), f = t - i;
+    return CLOCK[i].map((v, q) => v + (CLOCK[i + 1][q] - v) * f);
+  }
+  function blackHoleShape(prm) {
+    const rs = prm.rs, R = prm.reach, wmax = 2 * Math.sqrt(rs * (R - rs)), both = !!prm.both;
+    return { rs, R, wmax, both, w0: both ? -wmax : 0, w1: wmax, shift: both ? 0 : -wmax / 2 };
+  }
+  // photon path in its plane, from far away along +x with impact parameter b; returns plane points [x, y] and whether it fell in
+  function photon(rs, R, b) {
+    const u0 = 1 / R, d0 = 1 / (b * b) - u0 * u0 + rs * u0 ** 3;
+    const phi0 = Math.atan2(b, -Math.sqrt(Math.max(0, R * R - b * b)));
+    let u = u0, du = Math.sqrt(Math.max(0, d0)), psi = 0, fell = false;
+    const pts = [], h = 0.01, acc = (uu) => 1.5 * rs * uu * uu - uu;
+    for (let n = 0; n < 4000; n++) {
+      const r = 1 / u, phi = phi0 - psi;
+      pts.push([r * Math.cos(phi), r * Math.sin(phi)]);
+      // RK4 for u'' = 1.5 rₛ u² − u
+      const k1u = du, k1v = acc(u), k2u = du + h / 2 * k1v, k2v = acc(u + h / 2 * k1u), k3u = du + h / 2 * k2v, k3v = acc(u + h / 2 * k2u), k4u = du + h * k3v, k4v = acc(u + h * k3u);
+      const uP = u, psiP = psi;
+      u += h / 6 * (k1u + 2 * k2u + 2 * k3u + k4u); du += h / 6 * (k1v + 2 * k2v + 2 * k3v + k4v); psi += h;
+      // end exactly where the ray crosses the horizon or leaves the drawn region
+      const end = u >= 1 / rs ? 1 / rs : u < u0 && du < 0 ? u0 : 0;
+      if (end) {
+        const p2 = phi0 - (psiP + (psi - psiP) * (end - uP) / (u - uP));
+        pts.push([Math.cos(p2) / end, Math.sin(p2) / end]); fell = end !== u0; break;
+      }
+    }
+    return { pts, fell };
+  }
+  function blackHole(prm) {
+    const S = blackHoleShape(prm), { rs, R, w0, w1, shift } = S, M = new Mesh();
+    const rOf = w => rs + w * w / (4 * rs), wOf = r => 2 * Math.sqrt(Math.max(0, rs * (r - rs)));
+    // colour by the clock rate √(1 − rₛ/r): red at the horizon, white-blue far away
+    const shade = r => clockColor(Math.sqrt(Math.max(0, 1 - rs / r)));
+    const { v: sph, f: tri } = icosphere(prm.detail), L = 6 + 8 * prm.detail * (S.both ? 2 : 1);
+    const layer = [];
+    for (let k = 0; k <= L; k++) {
+      const w = w0 + (w1 - w0) * k / L, r = rOf(w);
+      layer.push(sph.map(n => M.pt([r * n[0], r * n[1], r * n[2], w + shift])));
+    }
+    // each triangle of the sphere times each layer is a prism, split by vertex order so neighbours agree
+    for (let k = 0; k < L; k++) {
+      const w = w0 + (w1 - w0) * (k + 0.5) / L, col = shade(rOf(w));
+      for (const t of tri) {
+        const [a, b, c] = t.slice().sort((p, q) => p - q), A = layer[k], B = layer[k + 1];
+        M.tet(A[a], A[b], A[c], B[a], col); M.tet(A[b], A[c], B[a], B[b], col); M.tet(A[c], B[a], B[b], B[c], col);
+      }
+    }
+    // the classic picture: the equatorial plane y = 0 as a funnel, with rings and spokes
+    if (prm.funnel) {
+      const NA = 72, idx = [];
+      for (let k = 0; k <= L; k++) { const w = w0 + (w1 - w0) * k / L, r = rOf(w); idx.push(Array.from({ length: NA }, (_, j) => M.pt([r * Math.cos(2 * Math.PI * j / NA), 0, r * Math.sin(2 * Math.PI * j / NA), w + shift]))); }
+      for (let k = 0; k < L; k++) {
+        const col = shade(rOf(w0 + (w1 - w0) * (k + 0.5) / L));
+        for (let j = 0; j < NA; j++) { const j2 = (j + 1) % NA; M.tri(idx[k][j], idx[k + 1][j], idx[k + 1][j2], col); M.tri(idx[k][j], idx[k + 1][j2], idx[k][j2], col); }
+      }
+      for (let k = 0; k <= L; k += 2) for (let j = 0; j < NA; j++) M.edge(idx[k][j], idx[k][(j + 1) % NA]);
+      for (let j = 0; j < NA; j += 6) for (let k = 0; k < L; k++) M.edge(idx[k][j], idx[k + 1][j]);
+    }
+    // the horizon and the photon sphere, as rings on the funnel
+    const ring = (r, col, side) => { const w = side * wOf(r), pts = []; for (let j = 0; j < 120; j++) { const a = 2 * Math.PI * j / 120; pts.push([r * Math.cos(a), 0, r * Math.sin(a), w + shift]); } M.curve(pts, true, col); };
+    ring(rs, [1, 0.3, 0.12], 0);
+    if (1.5 * rs < R) { ring(1.5 * rs, [0.98, 0.75, 0.3], 1); if (S.both) ring(1.5 * rs, [0.98, 0.75, 0.3], -1); }
+    // light rays: a beam along +x, in planes through the x axis
+    let fell = 0;
+    const bc = 1.5 * Math.sqrt(3) * rs;
+    for (let pl = 0; pl < prm.planes; pl++) {
+      const th = Math.PI * pl / prm.planes, ny = Math.sin(th), nz = Math.cos(th);
+      for (let i = 0; i < prm.rays; i++) {
+        const b = bc * prm.beam * (prm.rays === 1 ? 1 : (2 * i / (prm.rays - 1) - 1)) || 1e-3 * bc;
+        const ab = Math.abs(b), P = photon(rs, R, Math.max(ab, 1e-4)), sg = b < 0 ? -1 : 1;
+        if (P.fell) fell++;
+        const pts = P.pts.map(([x, y]) => { const r = Math.hypot(x, y); return [x, sg * y * ny, sg * y * nz, wOf(r) + shift]; });
+        const near = Math.min(1, Math.abs(ab - bc) / bc * 4);
+        M.curve(pts, false, P.fell ? [0.95, 0.35, 0.72] : [0.98 - 0.1 * (1 - near), 0.98 - 0.04 * (1 - near), 1]);
+      }
+    }
+    const rows = [
+      ['Space', 'ds² = dr²/(1 − rₛ/r) + r² dΩ², the Schwarzschild geometry at one instant'],
+      ['In 4D', 'exactly the hypersurface w = 2√(rₛ(r − rₛ)): Flamm’s paraboloid, one dimension up'],
+      ['Colour', 'how fast a clock held still there runs, √(1 − rₛ/r): red is slow, blue is nearly normal'],
+      ['Horizon', `r = rₛ = ${rs.toFixed(2)}, the throat (red ring)${S.both ? '; past it, the second sheet of the Einstein–Rosen bridge' : ''}`],
+      ['Light', `photon sphere at 1.5 rₛ (amber ring); white rays escape, bent; pink rays, with impact parameter below (3√3/2) rₛ = ${bc.toFixed(3)}, fall in`],
+      ['Slices', 'y = 0 is the classic funnel; w = const is a sphere; GPU shows the space as a thin shell'],
+    ];
+    return M.done({
+      sliceTube: 0, tubeR: prm.tube,
+      info: { name: 'Black hole', sub: `Schwarzschild space in E⁴, rₛ = ${rs.toFixed(2)}`, counts: [['rays', prm.rays * prm.planes], ['fall in', fell], ['tets', M.tets.length / 4], ['layers', L]], rows },
+    });
+  }
+
+  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS, blackHole, blackHoleShape, photon };
   if (typeof module !== 'undefined') module.exports = root.Objects;
 })(typeof window !== 'undefined' ? window : globalThis);

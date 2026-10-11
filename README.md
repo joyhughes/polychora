@@ -5,6 +5,7 @@ Interactive WebGL2 viewer for 4D objects:
 - **The 16 regular polychora**: the 6 convex regular 4-polytopes and all 10 Schläfli–Hess star polychora (the regular stellations of the 120-cell and 600-cell), with adjustable cell shrink
 - **The permutohedron** (omnitruncated 5-cell): the 120 orderings of (1, 2, 3, 4, 5), with 10 truncated-octahedron and 20 hexagonal-prism cells
 - **Clifford torus** and the family of flat tori in S³: torus angle η, solid-shell thickness, mesh resolution, grid lines, and a (p, q) torus knot or link drawn on the surface
+- **Black hole**: the curved 3D space around a Schwarzschild black hole, which fits exactly in flat 4D as the hypersurface w = 2√(rₛ(r − rₛ)) (Flamm's paraboloid one dimension up), coloured by how fast a clock runs there; optionally both sheets of the Einstein–Rosen bridge. Light rays follow the photon orbit equation u'' + u = (3/2) rₛ u²: they bend, wind round the photon sphere at 1.5 rₛ, or fall in below the capture limit (3√3/2) rₛ. The slice y = 0 is the textbook funnel diagram
 - **Hopf fibration**: fibres over latitude rings, a Fibonacci spread over S², or one tilted great circle; ring count, latitude, spread, phase, animated flow, tube radius, and optional Hopf tori
 - **Sierpinski fractals**: pentatope, 16-cell, Cantor tesseract, Menger tesseract and Vicsek tesseract, with fractal depth and (where it applies) the scale ratio; the similarity dimension is shown live
 - **Fractal mountain**: a 4D landscape, the solid under a height y = h(x, z, w) over a cube of ground, grown by diamond–square on a 3D grid; seed, detail, roughness, height, sea level and snow line. Each slice across w is an ordinary 3D mountain, and sweeping the slice moves through the range
@@ -45,7 +46,7 @@ Slices are exact: each cell is decomposed into tetrahedra (cell centre + fan tri
 - **Fractals:** by walking the map tree, pruning by each copy's bounding polytope.
 - **Fractal mountain:** by walking the grid cubes under the ray's shadow on the ground; the height is linear on each cube's six Kuhn tetrahedra, so each piece of the ray meets the surface exactly once at most.
 - **L-system tree:** by clipping against each branch's 22 half-spaces and each leaf's 16, skipping any subtree whose bounding ball the ray misses.
-- **Clifford torus and Hopf fibres:** by marching their distance fields as thin solid tubes.
+- **Clifford torus, Hopf fibres and black hole:** by marching their distance fields as thin solid tubes (or, for the black hole, a thin shell about its space).
 
 The interval lists are combined from the top down, and the surfaces where the result starts and stops are shaded (all of them, front to back, when translucent).
 

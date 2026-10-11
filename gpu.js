@@ -5,7 +5,7 @@
 // Nothing is meshed, so shapes can move every frame.
 (function (root) {
   const P = root.Polychora, O = root.Objects, CSG = root.CSG;
-  const T_CONVEX = 1, T_STAR = 2, T_FRAC = 3, T_TORUS = 4, T_HOPF = 5, T_MTN = 6, T_TREE = 7;
+  const T_CONVEX = 1, T_STAR = 2, T_FRAC = 3, T_TORUS = 4, T_HOPF = 5, T_MTN = 6, T_TREE = 7, T_BH = 8;
   const MAXS = 8, TEXW = 2048;
   const DEG = Math.PI / 180;
 
@@ -96,7 +96,14 @@
     return { type: T_TREE, texels: tx, c1: br.length, c2: 0, prm: [depth, 0, 0, 0] };
   }
 
+  // black hole: the space as a thin shell about r = rₛ + w²/(4rₛ)
+  function blackHoleData(prm) {
+    const S = O.blackHoleShape(prm);
+    return { type: T_BH, texels: [], c1: 0, c2: 0, prm: [S.rs, S.R, S.both ? 1 : 0, S.shift] };
+  }
+
   function shapeData(o, prm, time) {
+    if (o.kind === 'bh') return blackHoleData(prm);
     if (o.kind === 'mtn') return mountainData(prm);
     if (o.kind === 'tree') return treeData(prm);
     if (o.kind === 'poly') return polytopeData(o.id);
@@ -263,7 +270,16 @@
     }
     return best - uPrm[k].x;
   }
-  float tubeD(int k, vec4 y, out int fi) { fi = 0; return uType[k] == ${T_TORUS} ? torusD(k, y) : hopfD(k, y, fi); }
+  // distance (to first order) from the black hole's space r = rₛ + w²/(4rₛ), cut off at the reach and, for one sheet, at w = 0
+  float bhD(int k, vec4 y) {
+    vec4 p = uPrm[k]; float rs = p.x, w = y.w - p.w, r = length(y.xyz);
+    float g = (r - rs - w * w / (4.0 * rs)) / sqrt(1.0 + w * w / (4.0 * rs * rs));
+    float d = abs(g) - 0.008;
+    d = max(d, r - p.y);
+    if (p.z < 0.5) d = max(d, -w);
+    return d;
+  }
+  float tubeD(int k, vec4 y, out int fi) { fi = 0; return uType[k] == ${T_TORUS} ? torusD(k, y) : uType[k] == ${T_BH} ? bhD(k, y) : hopfD(k, y, fi); }
   void tubeIv(int k, vec4 Y0, vec4 Yd) {
     // only inside the ball |y| <= 1.2 that holds the 3-sphere objects
     float A = dot(Yd, Yd), B = dot(Y0, Yd), C = dot(Y0, Y0) - 1.44, D = B * B - A * C;
@@ -419,11 +435,16 @@
     int k = e.x >> 24, idx = e.x & 0xFFFFFF, ty = uType[k];
     vec4 y = Y0s[k] + t * Yds[k], nl, own;
     edge = 0.0;
-    if (ty == ${T_TORUS} || ty == ${T_HOPF}) {
+    if (ty == ${T_TORUS} || ty == ${T_HOPF} || ty == ${T_BH}) {
       int fi; float h = 1e-3;
       nl = vec4(tubeD(k, y + vec4(h, 0, 0, 0), fi) - tubeD(k, y - vec4(h, 0, 0, 0), fi), tubeD(k, y + vec4(0, h, 0, 0), fi) - tubeD(k, y - vec4(0, h, 0, 0), fi),
                 tubeD(k, y + vec4(0, 0, h, 0), fi) - tubeD(k, y - vec4(0, 0, h, 0), fi), tubeD(k, y + vec4(0, 0, 0, h), fi) - tubeD(k, y - vec4(0, 0, 0, h), fi));
       if (ty == ${T_HOPF}) { tubeD(k, y, fi); own = vec4(hopfColor(tex(uOff[k] + 2 * fi)), 1.0); }
+      else if (ty == ${T_BH}) {
+        float g = clamp(sqrt(max(0.0, 1.0 - uPrm[k].x / max(1e-6, length(y.xyz))) ), 0.0, 1.0) * 4.0;
+        vec3 c0 = vec3(0.35, 0.05, 0.06), c1 = vec3(0.85, 0.25, 0.1), c2 = vec3(0.96, 0.66, 0.26), c3 = vec3(0.72, 0.8, 0.92), c4 = vec3(0.42, 0.56, 0.9);
+        own = vec4(g < 1.0 ? mix(c0, c1, g) : g < 2.0 ? mix(c1, c2, g - 1.0) : g < 3.0 ? mix(c2, c3, g - 2.0) : mix(c3, c4, g - 3.0), 1.0);
+      }
       else {
         float th = atan(y.y, y.x), ph = atan(y.w, y.z);
         own = vec4(hsl(fract(th / 6.2831853 + 1.0), 0.6, mod(floor(fract(ph / 6.2831853 + 1.0) * 8.0), 2.0) > 0.5 ? 0.6 : 0.44), 1.0);

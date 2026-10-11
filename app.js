@@ -9,6 +9,7 @@
   const OBJECTS = [];
   for (const s of P.CATALOG) OBJECTS.push({ key: 'poly:' + s.id, label: `${s.name}  ${s.sym}`, group: s.kind === 'convex' ? 'Convex regular polychora' : s.kind === 'star' ? 'Schläfli–Hess star polychora' : 'Other polytopes', kind: 'poly', id: s.id });
   OBJECTS.push({ key: 'clifford', label: 'Clifford torus', group: 'Surfaces & fibrations in S³', kind: 'clifford', s3: true });
+  OBJECTS.push({ key: 'blackhole', label: 'Black hole (curved 3D space)', group: 'Curved space', kind: 'bh' });
   OBJECTS.push({ key: 'hopf', label: 'Hopf fibration', group: 'Surfaces & fibrations in S³', kind: 'hopf', s3: true });
   for (const [k, F] of Object.entries(O.FRACTALS)) OBJECTS.push({ key: 'frac:' + k, label: F.name, group: 'Sierpinski fractals', kind: 'frac', id: k });
   OBJECTS.push({ key: 'mountain', label: 'Fractal mountain', group: 'Fractal nature', kind: 'mtn' });
@@ -48,6 +49,17 @@
       { id: 'height', label: 'Height', min: 0.3, max: 1.3, step: 0.01, def: 0.85, fmt: 2 },
       { id: 'sea', label: 'Sea level', min: -0.48, max: 0.4, step: 0.01, def: -0.25, fmt: 2 },
       { id: 'snow', label: 'Snow line', min: 0.3, max: 1, step: 0.01, def: 0.72, fmt: 2, title: 'Share of the way from sea level to the summit' },
+    ];
+    if (o.kind === 'bh') return [
+      { id: 'rs', label: 'Horizon rₛ', min: 0.08, max: 0.6, step: 0.01, def: 0.28, fmt: 2, title: 'Schwarzschild radius 2GM/c²' },
+      { id: 'reach', label: 'Reach', min: 0.7, max: 1.3, step: 0.01, def: 1, fmt: 2, title: 'How far out the space is drawn' },
+      { id: 'both', label: 'Wormhole', type: 'check', def: false, title: 'Both sheets: the Einstein–Rosen bridge through the horizon' },
+      { id: 'detail', label: 'Detail', min: 1, max: 3, step: 1, def: 2 },
+      { id: 'funnel', label: 'Funnel', type: 'check', def: true, title: 'The classic embedding diagram: the equatorial plane y = 0' },
+      { id: 'rays', label: 'Light rays', min: 0, max: 31, step: 1, def: 15, title: 'Per plane, in a beam along +x' },
+      { id: 'planes', label: 'Ray planes', min: 1, max: 6, step: 1, def: 1, title: 'Planes through the beam’s axis, turned about it' },
+      { id: 'beam', label: 'Beam width', min: 0.2, max: 3, step: 0.01, def: 1.6, fmt: 2, title: 'Widest impact parameter, in units of the capture limit (3√3/2) rₛ' },
+      { id: 'tube', label: 'Ray radius', min: 0.003, max: 0.03, step: 0.001, def: 0.008, fmt: 3 },
     ];
     if (o.kind === 'tree') {
       const P0 = O.LSYS_PRESETS.tetra, edited = { custom: true };
@@ -475,7 +487,9 @@
   function initialPose() {
     const M = ident4();
     if (cur().s3) { rotWorld(M, 1, 2, 0.5); return M; } // keep the torus axes readable in stereographic view
-    if (cur().kind === 'mtn' || cur().kind === 'tree') { rotWorld(M, 0, 2, 0.5); return M; } // up stays up, and slices start straight across w
+    if (cur().kind === 'mtn' || cur().kind === 'tree') { rotWorld(M, 0, 2, 0.5); return M; }
+    // the black hole's depth w points up the screen, and slices go across y, so y = 0 is the textbook funnel
+    if (cur().kind === 'bh') { rotWorld(M, 1, 3, -Math.PI / 2); rotWorld(M, 0, 2, 0.4); return M; } // up stays up, and slices start straight across w
     rotWorld(M, 0, 3, 0.31); rotWorld(M, 1, 2, 0.23); rotWorld(M, 2, 3, 0.17); rotWorld(M, 0, 1, 0.11); return M;
   }
   let R = ident4(), T = [0, 0, 0, 0];
@@ -518,9 +532,10 @@
       if (o.kind === 'hopf') state.col = 'flat'; // fibres coloured by their point on S²
       // the mountain keeps its own colours and keeps y up: it turns about the vertical and through w
       // a slice of the tree only meets the branches that cross it, so it opens in projection to show the whole tree
-      if (o.kind === 'tree') { state.col = 'flat'; if (state.renderer !== 'gpu') state.mode = 'proj'; state.spin = [0, 0.15, 0, 0, 0, 0]; state.dist = 3.9; state.pitch = 0.25; }
+      if (o.kind === 'bh') { state.col = 'flat'; state.spin = [0, 0.12, 0, 0, 0, 0]; state.dist = 3.6; state.pitch = 0.45; }
+      else if (o.kind === 'tree') { state.col = 'flat'; if (state.renderer !== 'gpu') state.mode = 'proj'; state.spin = [0, 0.15, 0, 0, 0, 0]; state.dist = 3.9; state.pitch = 0.25; }
       else if (o.kind === 'mtn') { state.col = 'flat'; state.mode = 'slice'; state.spin = [0, 0.15, 0, 0, 0, 0]; state.dist = 4.3; state.pitch = 0.5; }
-      else if (was && (was.kind === 'mtn' || was.kind === 'tree')) { state.col = 'depth'; state.spin = [0, 0, 0.12, 0.3, 0, 0.18]; state.pitch = -0.35; }
+      else if (was && (was.kind === 'mtn' || was.kind === 'tree' || was.kind === 'bh')) { state.col = 'depth'; state.spin = [0, 0, 0.12, 0.3, 0, 0.18]; state.pitch = -0.35; }
       R = initialPose(); T = [0, 0, 0, 0];
     }
     buildParamUI(); buildShapeList(); showInfo(); dirty = true; syncUI();
@@ -529,10 +544,12 @@
   // Shapes are built and combined in a worker when the browser allows it, else right here.
   // A heavy combination arrives as a coarse draft and then the full result; while it refines, a change to the
   // scene restarts the worker rather than waiting.
+  // the worker's scripts carry a stamp from this page load, so an update never pairs a new page with old cached scripts
   let worker = null, inFlight = 0, refining = 0, jobSeq = 0, buildStart = 0;
+  const workerStamp = Date.now().toString(36);
   function startWorker() {
     try {
-      worker = new Worker('worker.js');
+      worker = new Worker('worker.js?v=' + workerStamp);
       worker.onmessage = e => {
         const r = e.data;
         if (r.job !== inFlight && r.job !== refining) return;
@@ -578,7 +595,7 @@
   }
   function placeholderInfo(o) {
     const c = o.kind === 'poly' && P.CATALOG.find(c => c.id === o.id);
-    const labels = o.kind === 'poly' ? ['cells', 'faces', 'edges', 'verts'] : o.kind === 'frac' ? ['copies', 'cells', 'faces', 'verts'] : o.kind === 'hopf' ? ['fibres', 'rings', 'segs', 'tori'] : o.kind === 'mtn' ? ['grid', 'summit', 'tets', 'verts'] : o.kind === 'tree' ? ['branches', 'leaves', 'tets', 'verts'] : ['grid', 'tris', 'tets', 'curves'];
+    const labels = o.kind === 'poly' ? ['cells', 'faces', 'edges', 'verts'] : o.kind === 'frac' ? ['copies', 'cells', 'faces', 'verts'] : o.kind === 'hopf' ? ['fibres', 'rings', 'segs', 'tori'] : o.kind === 'mtn' ? ['grid', 'summit', 'tets', 'verts'] : o.kind === 'tree' ? ['branches', 'leaves', 'tets', 'verts'] : o.kind === 'bh' ? ['rays', 'fall in', 'tets', 'layers'] : ['grid', 'tris', 'tets', 'curves'];
     return { name: shortName(o), sub: c ? c.sym : '', counts: labels.map(l => [l, '…']), rows: [] };
   }
   // the spinner beside the symbol while a build is pending (after a short delay, so quick ones do not flicker)

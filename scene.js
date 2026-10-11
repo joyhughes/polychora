@@ -10,6 +10,7 @@
     if (d.kind === 'hopf') return O.hopf(d.prm, hopfTime);
     if (d.kind === 'mtn') return O.mountain(d.prm);
     if (d.kind === 'tree') return O.tree(d.prm);
+    if (d.kind === 'bh') return O.blackHole(d.prm);
     return O.fractal(d.id, d.prm);
   }
 
