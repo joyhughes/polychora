@@ -207,6 +207,134 @@
     });
   }
 
+  // ---------------- melodies as 4D shapes ----------------
+  // Opening themes, as [MIDI pitch, beats]. Written down from memory: the first ones are well known note for note; those
+  // marked approx. are close in shape but may differ from the score in places.
+  const n = s => { const m = s.match(/^([A-G])([#b]?)(\d)$/), pc = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0); return 12 * (+m[3] + 1) + pc; };
+  const tune = str => str.trim().split(/\s+/).map(t => { const [p, d] = t.split(':'); return [n(p), +(d || 1)]; });
+  const TUNES = {
+    elise: { name: 'Beethoven, Für Elise', tempo: 150, exact: true, notes: tune('E5:.5 D#5:.5 E5:.5 D#5:.5 E5:.5 B4:.5 D5:.5 C5:.5 A4:1.5 C4:.5 E4:.5 A4:.5 B4:1.5 E4:.5 G#4:.5 B4:.5 C5:1.5 E4:.5 E5:.5 D#5:.5 E5:.5 D#5:.5 E5:.5 B4:.5 D5:.5 C5:.5 A4:1.5 C4:.5 E4:.5 A4:.5 B4:1.5 E4:.5 C5:.5 B4:.5 A4:2') },
+    ode: { name: 'Beethoven, Symphony 9: Ode to Joy', tempo: 120, exact: true, notes: tune('F#4 F#4 G4 A4 A4 G4 F#4 E4 D4 D4 E4 F#4 F#4:1.5 E4:.5 E4:2 F#4 F#4 G4 A4 A4 G4 F#4 E4 D4 D4 E4 F#4 E4:1.5 D4:.5 D4:2') },
+    fate: { name: 'Beethoven, Symphony 5: opening', tempo: 108, exact: true, notes: tune('G4:.5 G4:.5 G4:.5 Eb4:2 F4:.5 F4:.5 F4:.5 D4:2.5 G4:.5 G4:.5 G4:.5 Eb4:.5 Ab4:.5 Ab4:.5 Ab4:.5 G4:.5 Eb5:.5 Eb5:.5 Eb5:.5 C5:1.5 G4:.5 G4:.5 G4:.5 D4:.5 Ab4:.5 Ab4:.5 Ab4:.5 G4:.5 F5:.5 F5:.5 F5:.5 D5:2') },
+    nacht: { name: 'Mozart, Eine kleine Nachtmusik', tempo: 132, exact: true, notes: tune('G4:1 D4:.5 G4:1 D4:.5 G4:.5 D4:.5 G4:.5 B4:.5 D5:2 C5:1 A4:.5 C5:1 A4:.5 C5:.5 A4:.5 F#4:.5 A4:.5 D4:2') },
+    toccata: { name: 'Bach, Toccata in D minor', tempo: 60, exact: true, notes: tune('A5:.25 G5:.25 A5:1.5 G5:.25 F5:.25 E5:.25 D5:.25 C#5:1 D5:2 A4:.25 G4:.25 A4:1.5 E4:1 F4:1 C#4:1 D4:2') },
+    jupiter: { name: 'Holst, Jupiter (Thaxted), approx.', tempo: 84, exact: false, notes: tune('G4:.5 Bb4:.5 C5:1.5 C5:.5 Eb5:.75 D5:.25 C5:1 Bb4:.5 C5:.5 Bb4:1 G4:2 G4:.5 Bb4:.5 C5:1.5 C5:.5 Eb5:.75 D5:.25 C5:1 Bb4:.5 C5:.5 D5:1 Eb5:2') },
+    brand3: { name: 'Bach, Brandenburg Concerto 3, approx.', tempo: 100, exact: false, notes: tune('G4:.5 G4:.25 F#4:.25 G4:.5 D4:.5 G4:.5 A4:.25 G4:.25 A4:.5 D4:.5 A4:.5 B4:.25 A4:.25 B4:.5 G4:.5 C5:.5 B4:.5 A4:.5 G4:.5 F#4:.5 G4:.5 A4:.5 D4:1') },
+    waltz: { name: 'Chopin, Minute Waltz, approx.', tempo: 200, exact: false, notes: tune('Ab4:.5 G4:.5 Ab4:.5 C5:.5 Bb4:.5 Ab4:.5 G4:.5 Ab4:.5 C5:.5 Bb4:.5 Ab4:.5 G4:.5 Ab4:.5 C5:.5 Bb4:.5 Ab4:.5 Eb5:.5 Db5:.5 C5:.5 Bb4:.5 Ab4:.5 G4:.5 F4:.5 Eb4:.5 Db4:1.5') },
+  };
+  const NOTE_NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
+  const pcColor = pc => hsl(((pc % 12) + 12) % 12 / 12, 0.65, 0.55);
+  // 4D convex hull, built one point at a time: each facet is a tetrahedron with an outward plane n·x = h
+  function hull4(P) {
+    const N = P.length, eps = 1e-9;
+    if (N < 5) return null;
+    const sub = (a, b) => a.map((x, i) => x - b[i]), dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+    // a starting simplex from points as far apart as possible (Gram–Schmidt residuals)
+    const pick = [0], basis = [];
+    for (let k = 0; k < 4; k++) {
+      let best = -1, bi = -1;
+      for (let i = 0; i < N; i++) {
+        let r = sub(P[i], P[pick[0]]);
+        for (const b of basis) { const d = dot(r, b); r = r.map((x, q) => x - d * b[q]); }
+        const l = Math.hypot(...r); if (l > best) { best = l; bi = i; }
+      }
+      if (best < 1e-7) return null;
+      let r = sub(P[bi], P[pick[0]]);
+      for (const b of basis) { const d = dot(r, b); r = r.map((x, q) => x - d * b[q]); }
+      basis.push(r.map(x => x / Math.hypot(...r))); pick.push(bi);
+    }
+    const inner = [0, 1, 2, 3].map(q => pick.reduce((s, i) => s + P[i][q], 0) / 5);
+    const plane = v => {
+      const a = sub(P[v[1]], P[v[0]]), b = sub(P[v[2]], P[v[0]]), c = sub(P[v[3]], P[v[0]]);
+      const d3 = (i, j, k) => a[i] * (b[j] * c[k] - b[k] * c[j]) - a[j] * (b[i] * c[k] - b[k] * c[i]) + a[k] * (b[i] * c[j] - b[j] * c[i]);
+      let nn = [d3(1, 2, 3), -d3(0, 2, 3), d3(0, 1, 3), -d3(0, 1, 2)]; const l = Math.hypot(...nn); nn = nn.map(x => x / l);
+      let h = dot(nn, P[v[0]]); if (dot(nn, inner) > h) { nn = nn.map(x => -x); h = -h; }
+      return { v, n: nn, h };
+    };
+    let facets = [];
+    for (let k = 0; k < 5; k++) facets.push(plane(pick.filter((_, j) => j !== k)));
+    const used = new Set(pick);
+    for (let i = 0; i < N; i++) {
+      if (used.has(i)) continue;
+      const vis = facets.filter(f => dot(f.n, P[i]) - f.h > eps);
+      if (!vis.length) continue;
+      const ridges = new Map();
+      for (const f of vis) for (let k = 0; k < 4; k++) { const r = f.v.filter((_, j) => j !== k).sort((a, b) => a - b), key = r.join(); ridges.set(key, ridges.has(key) ? null : r); }
+      facets = facets.filter(f => !vis.includes(f));
+      for (const r of ridges.values()) if (r) facets.push(plane([...r, i]));
+    }
+    return facets;
+  }
+  // the melody's points in 4D, with the note each one completes
+  let melKey = '', melVal = null;
+  function melodyShape(prm) {
+    const key = JSON.stringify([prm.piece, prm.map, prm.hop, !!prm.fill]);
+    if (key === melKey) return melVal;
+    const T = TUNES[prm.piece], notes = T.notes, raw = [], last = [];
+    if (prm.map === 'chords') {
+      // four consecutive notes as a chord, its voices sorted (Tymoczko: chords are unordered); axes: three for the
+      // chord's shape, across the transposition direction (1,1,1,1), and that direction itself (register) as w
+      const B = [[1, -1, 0, 0].map(x => x / Math.SQRT2), [1, 1, -2, 0].map(x => x / Math.sqrt(6)), [1, 1, 1, -3].map(x => x / Math.sqrt(12)), [0.5, 0.5, 0.5, 0.5]];
+      for (let i = 0; i + 3 < notes.length; i += prm.hop) {
+        const c = notes.slice(i, i + 4).map(x => x[0]).sort((a, b) => a - b);
+        raw.push(B.map(b => b[0] * c[0] + b[1] * c[1] + b[2] * c[2] + b[3] * c[3])); last.push(i + 3);
+      }
+    } else {
+      // consecutive pairs of pitch classes as a point on the Clifford torus (chromatic circle or circle of fifths)
+      const ang = m => 2 * Math.PI * (prm.map === 'fifths' ? (7 * m) % 12 : m % 12) / 12;
+      for (let i = 0; i + 1 < notes.length; i++) { const a = ang(notes[i][0]), b = ang(notes[i + 1][0]); raw.push([Math.cos(a), Math.sin(a), Math.cos(b), Math.sin(b)].map(x => x / Math.SQRT2)); last.push(i + 1); }
+    }
+    // centre (chord space only) and fit within the unit ball
+    let pts = raw;
+    if (prm.map === 'chords') {
+      const c = [0, 1, 2, 3].map(q => raw.reduce((s, p) => s + p[q], 0) / raw.length);
+      const R = Math.max(1e-9, ...raw.map(p => Math.hypot(...p.map((x, q) => x - c[q]))));
+      // optionally stretch each axis to fill the view (this bends Tymoczko's distances, but shows a narrow tune's shape)
+      const ax = [0, 1, 2, 3].map(q => prm.fill ? Math.max(1e-9, ...raw.map(p => Math.abs(p[q] - c[q]))) * 1.4 : R);
+      pts = raw.map(p => p.map((x, q) => (x - c[q]) / ax[q]));
+    }
+    // distinct points for the hull
+    const seen = new Map(), uniq = [];
+    pts.forEach(p => { const k = p.map(x => Math.round(x * 1e7)).join(); if (!seen.has(k)) { seen.set(k, uniq.length); uniq.push(p); } });
+    const facets = hull4(uniq);
+    melKey = key; melVal = { T, pts, last, uniq, facets };
+    return melVal;
+  }
+  function melodyMesh(prm) {
+    const S = melodyShape(prm), M = new Mesh(), notes = S.T.notes;
+    if (prm.hull && S.facets) {
+      const idx = S.uniq.map(p => M.pt(p)), faces = new Map(), edges = new Set();
+      // each facet coloured by the notes at its corners (the mean of their pitch classes on the colour wheel)
+      const ucol = S.uniq.map(p => { const j = S.pts.findIndex(q => q.every((x, k) => Math.abs(x - p[k]) < 1e-9)); return notes[S.last[j]][0] % 12; });
+      for (const f of S.facets) {
+        let cx = 0, cy = 0; for (const v of f.v) { cx += Math.cos(ucol[v] * Math.PI / 6); cy += Math.sin(ucol[v] * Math.PI / 6); }
+        const col = hsl(((Math.atan2(cy, cx) / (2 * Math.PI)) + 1) % 1, 0.45, 0.5);
+        M.tet(idx[f.v[0]], idx[f.v[1]], idx[f.v[2]], idx[f.v[3]], col);
+        for (let k = 0; k < 4; k++) { const r = f.v.filter((_, j) => j !== k).sort((a, b) => a - b), key = r.join(); if (!faces.has(key)) { faces.set(key, 1); M.tri(idx[r[0]], idx[r[1]], idx[r[2]], col); } }
+        for (let a = 0; a < 4; a++) for (let b = a + 1; b < 4; b++) { const x = Math.min(f.v[a], f.v[b]), y = Math.max(f.v[a], f.v[b]); if (!edges.has(x * 1e4 + y)) { edges.add(x * 1e4 + y); M.edge(idx[x], idx[y]); } }
+      }
+    }
+    if (prm.path) {
+      // the melody itself: one tube per step, coloured by the note it arrives on
+      for (let i = 0; i + 1 < S.pts.length; i++) M.curve([S.pts[i], S.pts[i + 1]], false, pcColor(notes[S.last[i + 1]][0]));
+    }
+    const mapName = { chords: 'four-note chord space (Tymoczko)', dyads: 'note pairs on the Clifford torus', fifths: 'note pairs on the Clifford torus, circle of fifths' }[prm.map];
+    const rows = [
+      ['Piece', S.T.name + (S.T.exact ? '' : ' (transcribed from memory; may differ from the score)')],
+      ['Mapping', mapName],
+      prm.map === 'chords'
+        ? ['Axes', 'each run of four notes is a chord, its voices sorted; x, y, z: the chord’s shape (Tymoczko’s tetrahedral space of four-note chords), w: its register, the average pitch along (1,1,1,1). Each step is a voice leading']
+        : ['Axes', `(cos a, sin a, cos b, sin b)/√2 for each pair of notes (a, b), with pitch classes ${prm.map === 'fifths' ? 'round the circle of fifths' : 'round the chromatic circle'}: ordered two-note chords form this torus`],
+      ...(prm.map === 'chords' && prm.fill ? [['Scale', 'each axis stretched to fill the view, so distances are not Tymoczko’s voice-leading sizes']] : []),
+      ['Shape', S.facets ? `the 4D convex hull of every chord the tune visits: ${S.facets.length} tetrahedral cells` : 'too few distinct points for a 4D hull'],
+      ['Colour', 'the path by the note it arrives on; the hull by the notes at its corners, round the colour wheel'],
+    ];
+    return M.done({
+      sliceTube: 0, tubeR: prm.tube,
+      info: { name: S.T.name.replace(/, approx\.$/, ''), sub: mapName, counts: [['notes', notes.length], ['points', S.uniq.length], ['cells', S.facets ? S.facets.length : 0], ['steps', Math.max(0, S.pts.length - 1)]], rows },
+    });
+  }
+
   // ---------------- Hopf chord ----------------
   // A point travels round one Hopf fibre, the great circle over the point (θ, φ) of S²:
   //   (cos(θ/2) cos(t + φ), cos(θ/2) sin(t + φ), sin(θ/2) cos t, sin(θ/2) sin t)
@@ -787,6 +915,6 @@
     });
   }
 
-  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS, blackHole, blackHoleShape, photon, kerrPhoton, chord };
+  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS, blackHole, blackHoleShape, photon, kerrPhoton, chord, TUNES, melodyShape, melodyMesh, hull4 };
   if (typeof module !== 'undefined') module.exports = root.Objects;
 })(typeof window !== 'undefined' ? window : globalThis);

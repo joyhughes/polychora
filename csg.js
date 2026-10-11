@@ -4,6 +4,7 @@
 //   star polytopes    |p| − r(p/|p|): the solid is everything the boundary hides from the centre
 //   fractals          the IFS applied to the base polytope's field
 //   mountain          the height above the ground, against the floor and the sides of the ground
+//   melody            the convex hull of the points a tune visits
 //   L-system tree     the least over its branches (icosahedral prisms) and leaves (16-cells)
 // Every boundary is made of flat pieces, so each field can also report the hyperplane it is resting on.
 // Surfaces and curves (Clifford torus, Hopf fibres) have no inside: they are clipped but cut nothing.
@@ -246,6 +247,18 @@
     if (o.kind === 'frac') return { f: fractalField(o.id, prm), lip: 1 };
     if (o.kind === 'mtn') return { f: mountainField(prm), lip: 1 };
     if (o.kind === 'tree') return { f: treeField(prm), lip: 1 };
+    if (o.kind === 'melody' && prm.hull) {
+      // the convex hull of the melody's points: the most of its cells' plane values
+      const F = Obj.melodyShape(prm).facets; if (!F) return null;
+      const m = F.length, n = new Float64Array(m * 4), h = new Float64Array(m);
+      F.forEach((f, i) => { for (let k = 0; k < 4; k++) n[i * 4 + k] = f.n[k]; h[i] = f.h; });
+      return { f: (x0, x1, x2, x3, P) => {
+        let best = -Infinity, bi = 0;
+        for (let i = 0, o = 0; i < m; i++, o += 4) { const d = n[o] * x0 + n[o + 1] * x1 + n[o + 2] * x2 + n[o + 3] * x3 - h[i]; if (d > best) { best = d; bi = i; } }
+        if (P) { P[0] = n[bi * 4]; P[1] = n[bi * 4 + 1]; P[2] = n[bi * 4 + 2]; P[3] = n[bi * 4 + 3]; P[4] = h[bi]; }
+        return best;
+      }, lip: 1, convex: true };
+    }
     return null;
   }
 

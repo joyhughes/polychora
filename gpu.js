@@ -116,6 +116,12 @@
 
   function shapeData(o, prm, time) {
     if (o.kind === 'bh') return blackHoleData(prm);
+    if (o.kind === 'melody') {
+      // its hull, as a convex polytope (no hull: nothing to ray trace)
+      const F = prm.hull ? O.melodyShape(prm).facets : null, tx = [];
+      if (F) F.forEach((f, i) => tx.push(f.n, [f.h, i, 0, 0]));
+      return F ? { type: T_CONVEX, texels: tx, c1: F.length, c2: 0, prm: [0, 0, 0, 0] } : { type: T_HOPF, texels: [], c1: 0, c2: 0, prm: [0.001, 0, 0, 0] };
+    }
     if (o.kind === 'chord') {
       // its fibre, as a Hopf tube
       const th = prm.lat * DEG, ph = prm.lon * DEG;

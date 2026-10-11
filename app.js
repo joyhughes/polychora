@@ -9,6 +9,7 @@
   const OBJECTS = [];
   for (const s of P.CATALOG) OBJECTS.push({ key: 'poly:' + s.id, label: `${s.name}  ${s.sym}`, group: s.kind === 'convex' ? 'Convex regular polychora' : s.kind === 'star' ? 'Schläfli–Hess star polychora' : 'Other polytopes', kind: 'poly', id: s.id });
   OBJECTS.push({ key: 'clifford', label: 'Clifford torus', group: 'Surfaces & fibrations in S³', kind: 'clifford', s3: true });
+  OBJECTS.push({ key: 'melody', label: 'Melody as a 4D shape', group: '4D music', kind: 'melody' });
   OBJECTS.push({ key: 'blackhole', label: 'Black hole (curved 3D space)', group: 'Curved space', kind: 'bh' });
   OBJECTS.push({ key: 'hopf', label: 'Hopf fibration', group: 'Surfaces & fibrations in S³', kind: 'hopf', s3: true });
   OBJECTS.push({ key: 'chord', label: 'Hopf chord (4D music)', group: 'Surfaces & fibrations in S³', kind: 'chord', s3: true });
@@ -50,6 +51,19 @@
       { id: 'height', label: 'Height', min: 0.3, max: 1.3, step: 0.01, def: 0.85, fmt: 2 },
       { id: 'sea', label: 'Sea level', min: -0.48, max: 0.4, step: 0.01, def: -0.25, fmt: 2 },
       { id: 'snow', label: 'Snow line', min: 0.3, max: 1, step: 0.01, def: 0.72, fmt: 2, title: 'Share of the way from sea level to the summit' },
+    ];
+    if (o.kind === 'melody') return [
+      { id: 'piece', label: 'Piece', type: 'select', options: Object.entries(O.TUNES).map(([k, t]) => [k, t.name]), def: 'ode' },
+      { id: 'map', label: 'Mapping', type: 'select', options: [['chords', 'Four-note chords (Tymoczko)'], ['dyads', 'Note pairs on a torus'], ['fifths', 'Pairs, circle of fifths']], def: 'chords',
+        title: 'Chords: four notes at a time, voices sorted, register along w. Pairs: each two notes as a point (cos a, sin a, cos b, sin b)/√2 on the Clifford torus' },
+      { id: 'hop', label: 'Step', min: 1, max: 4, step: 1, def: 1, show: p => p.map === 'chords', title: 'Notes between one chord and the next (1: overlapping windows)' },
+      { id: 'fill', label: 'Fill axes', type: 'check', def: true, show: p => p.map === 'chords', title: 'Stretch each axis to fill the view; off keeps true voice-leading distances, where a tune moving by step stays thin' },
+      { id: 'hull', label: 'Hull', type: 'check', def: true, title: 'The 4D convex hull of every chord the tune visits: a solid to slice and combine' },
+      { id: 'path', label: 'Path', type: 'check', def: true, title: 'The melody’s path through the space, step by step' },
+      { id: 'tube', label: 'Tube radius', min: 0.004, max: 0.04, step: 0.001, def: 0.012, fmt: 3 },
+      { id: 'tempoX', label: 'Tempo ×', min: 0.25, max: 2, step: 0.05, def: 1, fmt: 2 },
+      { id: 'loop', label: 'Loop', type: 'check', def: true },
+      { id: 'play', label: 'Play the tune', type: 'button', click: () => toggleTune() },
     ];
     if (o.kind === 'chord') return [
       { id: 'lat', label: 'Latitude θ', min: 0, max: 180, step: 1, def: 70, unit: '°', title: 'Which fibre: its base point on S². θ sets how far x, y swing (cos θ/2) against z, w (sin θ/2)' },
@@ -156,6 +170,7 @@
       const r = document.createElement('div'), id = 'prm-' + d.id;
       r.className = 'row' + (d.type === 'check' ? ' check' : d.type === 'text' || d.type === 'textarea' || d.type === 'help' ? ' wide' : ''); r.dataset.id = d.id; if (d.title) r.title = d.title;
       if (d.type === 'help') { r.innerHTML = `<p class="help">${d.html}</p>`; box.appendChild(r); continue; }
+      if (d.type === 'button') { r.className = 'btns'; r.innerHTML = `<button type="button" id="${id}">${d.label}</button>`; box.appendChild(r); r.querySelector('button').onclick = d.click; continue; }
       if (d.type === 'text') r.innerHTML = `<label for="${id}">${d.label}</label><input type="text" id="${id}" spellcheck="false" autocomplete="off">`;
       else if (d.type === 'textarea') r.innerHTML = `<label for="${id}">${d.label}</label><textarea id="${id}" rows="3" spellcheck="false"></textarea>`;
       else if (d.type === 'select') r.innerHTML = `<label for="${id}">${d.label}</label><select id="${id}">${d.options.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select>`;
@@ -550,6 +565,8 @@
       else { if (state.p4 === 'stereo') state.p4 = 'persp'; state.dist = 3.7; }
       if (o.kind === 'hopf' || o.kind === 'chord') state.col = 'flat'; // fibres coloured by their point on S²
       if (o.kind === 'chord' && state.renderer !== 'gpu') state.mode = 'proj';
+      // the melody's hull is translucent, so its path shows inside it
+      if (o.kind === 'melody') { state.col = 'flat'; state.surf = 'trans'; if (state.renderer !== 'gpu') state.mode = 'proj'; }
       // the mountain keeps its own colours and keeps y up: it turns about the vertical and through w
       // a slice of the tree only meets the branches that cross it, so it opens in projection to show the whole tree
       if (o.kind === 'bh') { state.col = 'flat'; state.spin = [0, 0.12, 0, 0, 0, 0]; state.dist = 3.6; state.pitch = 0.45; }
@@ -615,7 +632,7 @@
   }
   function placeholderInfo(o) {
     const c = o.kind === 'poly' && P.CATALOG.find(c => c.id === o.id);
-    const labels = o.kind === 'poly' ? ['cells', 'faces', 'edges', 'verts'] : o.kind === 'frac' ? ['copies', 'cells', 'faces', 'verts'] : o.kind === 'hopf' ? ['fibres', 'rings', 'segs', 'tori'] : o.kind === 'mtn' ? ['grid', 'summit', 'tets', 'verts'] : o.kind === 'tree' ? ['branches', 'leaves', 'tets', 'verts'] : o.kind === 'bh' ? ['rays', 'fall in', 'tets', 'layers'] : o.kind === 'chord' ? ['voices', 'orbit', 'fibres', 'latitude'] : ['grid', 'tris', 'tets', 'curves'];
+    const labels = o.kind === 'poly' ? ['cells', 'faces', 'edges', 'verts'] : o.kind === 'frac' ? ['copies', 'cells', 'faces', 'verts'] : o.kind === 'hopf' ? ['fibres', 'rings', 'segs', 'tori'] : o.kind === 'mtn' ? ['grid', 'summit', 'tets', 'verts'] : o.kind === 'tree' ? ['branches', 'leaves', 'tets', 'verts'] : o.kind === 'bh' ? ['rays', 'fall in', 'tets', 'layers'] : o.kind === 'chord' ? ['voices', 'orbit', 'fibres', 'latitude'] : o.kind === 'melody' ? ['notes', 'points', 'cells', 'steps'] : ['grid', 'tris', 'tets', 'curves'];
     return { name: shortName(o), sub: c ? c.sym : '', counts: labels.map(l => [l, '…']), rows: [] };
   }
   // the spinner beside the symbol while a build is pending (after a short delay, so quick ones do not flicker)
@@ -1125,8 +1142,9 @@
   const melQ = new Float64Array(4), melS = new Float64Array(6);
   function viewOf(p) { for (let r = 0; r < 4; r++) melQ[r] = R[r * 4] * p[0] + R[r * 4 + 1] * p[1] + R[r * 4 + 2] * p[2] + R[r * 4 + 3] * p[3] + T[r]; return melQ; }
   let melHud = 0;
+  let walkOn = false; // the walkers play only when asked (the tune player shares the audio)
   function melodyFrame() {
-    const playing = window.Melody.running;
+    const playing = window.Melody.running && walkOn;
     if (!G || !G.edges.length) { if (playing) walkers.forEach((w, k) => window.Melody.slide(k, 220, MEL.tone, 0, 0.05)); return; }
     if (G !== melG) { melG = G; graph = buildGraph(); rts.forEach(rt => { rt.reset = true; rt.hist = []; rt.next = 0; }); }
     if (!graph.pos.length) return;
@@ -1218,14 +1236,58 @@
   buildMelodyUI();
   $('melBtn').onclick = async () => {
     try {
-      if (window.Melody.on) window.Melody.stop();
-      else { await window.Melody.start(); rts.forEach(rt => { rt.reset = true; rt.hist = []; rt.next = 0; }); }
+      if (walkOn) { walkOn = false; if (!tune.on) window.Melody.stop(); }
+      else { await window.Melody.start(); walkOn = true; rts.forEach(rt => { rt.reset = true; rt.hist = []; rt.next = 0; }); }
     } catch (err) { note('Sound could not start: ' + (err.message || err)); }
-    $('melBtn').setAttribute('aria-pressed', String(window.Melody.on)); $('melBtn').textContent = window.Melody.on ? 'Stop melody' : 'Play melody';
+    $('melBtn').setAttribute('aria-pressed', String(walkOn)); $('melBtn').textContent = walkOn ? 'Stop melody' : 'Play melody';
   };
   document.addEventListener('visibilitychange', () => window.Melody.setLive(!document.hidden));
   addEventListener('pagehide', () => window.Melody.close());
-  addEventListener('pageshow', () => { $('melBtn').setAttribute('aria-pressed', String(window.Melody.on)); $('melBtn').textContent = window.Melody.on ? 'Stop melody' : 'Play melody'; });
+  addEventListener('pageshow', () => { walkOn = walkOn && window.Melody.on; tune.on = tune.on && window.Melody.on; $('melBtn').setAttribute('aria-pressed', String(walkOn)); $('melBtn').textContent = walkOn ? 'Stop melody' : 'Play melody'; tuneButton(); });
+
+  // ---------- playing a melody shape: the tune sounds while a ball follows its path ----------
+  const tune = { on: false, shape: null, i: 0, next: 0, hist: [] };
+  function tuneButton() { const b = $('prm-play'); if (b) { b.textContent = tune.on ? 'Stop the tune' : 'Play the tune'; b.setAttribute('aria-pressed', String(tune.on)); } }
+  async function toggleTune() {
+    if (tune.on) { tune.on = false; tuneButton(); if (!walkOn) window.Melody.stop(); return; }
+    try { await window.Melody.start(); } catch (err) { note('Sound could not start: ' + (err.message || err)); return; }
+    Object.assign(tune, { on: true, shape: selShape(), i: 0, next: window.Melody.time + 0.1, hist: [] });
+    tuneButton();
+  }
+  const tuneQ = new Float64Array(4), tuneS = new Float64Array(6);
+  function tuneView(p, sh) {
+    const pl = window.CSG.placement(sh.place), w = [0, 1, 2, 3].map(r => pl.off[r] + pl.s * (pl.R[r * 4] * p[0] + pl.R[r * 4 + 1] * p[1] + pl.R[r * 4 + 2] * p[2] + pl.R[r * 4 + 3] * p[3]));
+    for (let r = 0; r < 4; r++) tuneQ[r] = R[r * 4] * w[0] + R[r * 4 + 1] * w[1] + R[r * 4 + 2] * w[2] + R[r * 4 + 3] * w[3] + T[r];
+    return tuneQ;
+  }
+  function tuneFrame() {
+    if (!tune.on) return;
+    const sh = tune.shape;
+    if (!scene.shapes.includes(sh) || objOf(sh.key).kind !== 'melody' || !sh.visible) { tune.on = false; tuneButton(); return; }
+    const prm = shapePrm(sh), S = O.melodyShape(prm), notes = S.T.notes, beat = 60 / (S.T.tempo * prm.tempoX), now = window.Melody.time;
+    if (!window.Melody.running) return;
+    while (tune.next < now + 0.12) {
+      if (tune.i >= notes.length) { if (!prm.loop) { if (now > tune.next) { tune.on = false; tuneButton(); } break; } tune.i = 0; tune.next += beat; }
+      const [m, b] = notes[tune.i];
+      window.Melody.pluck(tune.next, 440 * 2 ** ((m - 69) / 12), b * beat * 0.92, 'reed', 0.9);
+      tune.hist.push({ t: tune.next, i: tune.i }); if (tune.hist.length > 16) tune.hist.shift();
+      tune.next += b * beat; tune.i++;
+    }
+    // the ball sits on the last point whose notes have all sounded
+    let h = null; for (const e of tune.hist) if (e.t <= now) h = e;
+    if (!h) return;
+    let k = -1; for (let j = 0; j < S.last.length; j++) if (S.last[j] <= h.i) k = j;
+    if (k < 0) return;
+    const mode = state.mode === 'slice' ? 'ortho' : state.p4, col = O.hsl((notes[h.i][0] % 12) / 12, 0.7, 0.62);
+    const q = tuneView(S.pts[k], sh);
+    if ((state.mode !== 'slice' || Math.abs(q[3] - state.slice) < 0.15) && project(q, 0, tuneS, 0, mode, state.eye4)) sphere(tuneS[0], tuneS[1], tuneS[2], 0.05, col[0], col[1], col[2], 1);
+    // and the last few steps glow behind it
+    for (let j = Math.max(0, k - 4); j < k; j++) {
+      const a = tuneView(S.pts[j], sh); if (!project(a, 0, tuneS, 0, mode, state.eye4)) continue;
+      const b2 = tuneView(S.pts[j + 1], sh); if (!project(b2, 0, tuneS, 3, mode, state.eye4)) continue;
+      if (state.mode !== 'slice') segTube(tuneS, 0, tuneS, 3, 0.012 + 0.01 * (j - k + 5) / 5, col[0], col[1], col[2], 1);
+    }
+  }
 
   // ---------- frame ----------
   let last = performance.now(), sweepPhase = 0, frameCount = 0, statT = 0;
@@ -1290,6 +1352,7 @@
     const overlayTri = nTri;
     chordFrame(dt);
     melodyFrame();
+    tuneFrame();
 
     if (nTri) {
       const trans = state.surf === 'trans';

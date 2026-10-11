@@ -12,6 +12,7 @@
     if (d.kind === 'tree') return O.tree(d.prm);
     if (d.kind === 'bh') return O.blackHole(d.prm);
     if (d.kind === 'chord') return O.chord(d.prm);
+    if (d.kind === 'melody') return O.melodyMesh(d.prm);
     return O.fractal(d.id, d.prm);
   }
 
