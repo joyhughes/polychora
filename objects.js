@@ -208,8 +208,8 @@
   }
 
   // ---------------- melodies as 4D shapes ----------------
-  // Opening themes, as [MIDI pitch, beats]. Written down from memory: the first ones are well known note for note; those
-  // marked approx. are close in shape but may differ from the score in places.
+  // Opening themes, as [MIDI pitch, beats]. Jupiter and the Minute Waltz come from public-domain scores (see their
+  // sources); the first five are well known note for note; the one marked approx. is from memory and may differ from the score.
   const n = s => { const m = s.match(/^([A-G])([#b]?)(\d)$/), pc = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0); return 12 * (+m[3] + 1) + pc; };
   const tune = str => str.trim().split(/\s+/).map(t => { const [p, d] = t.split(':'); return [n(p), +(d || 1)]; });
   const TUNES = {
@@ -218,9 +218,9 @@
     fate: { name: 'Beethoven, Symphony 5: opening', tempo: 108, exact: true, notes: tune('G4:.5 G4:.5 G4:.5 Eb4:2 F4:.5 F4:.5 F4:.5 D4:2.5 G4:.5 G4:.5 G4:.5 Eb4:.5 Ab4:.5 Ab4:.5 Ab4:.5 G4:.5 Eb5:.5 Eb5:.5 Eb5:.5 C5:1.5 G4:.5 G4:.5 G4:.5 D4:.5 Ab4:.5 Ab4:.5 Ab4:.5 G4:.5 F5:.5 F5:.5 F5:.5 D5:2') },
     nacht: { name: 'Mozart, Eine kleine Nachtmusik', tempo: 132, exact: true, notes: tune('G4:1 D4:.5 G4:1 D4:.5 G4:.5 D4:.5 G4:.5 B4:.5 D5:2 C5:1 A4:.5 C5:1 A4:.5 C5:.5 A4:.5 F#4:.5 A4:.5 D4:2') },
     toccata: { name: 'Bach, Toccata in D minor', tempo: 60, exact: true, notes: tune('A5:.25 G5:.25 A5:1.5 G5:.25 F5:.25 E5:.25 D5:.25 C#5:1 D5:2 A4:.25 G4:.25 A4:1.5 E4:1 F4:1 C#4:1 D4:2') },
-    jupiter: { name: 'Holst, Jupiter (Thaxted), approx.', tempo: 84, exact: false, notes: tune('G4:.5 Bb4:.5 C5:1.5 C5:.5 Eb5:.75 D5:.25 C5:1 Bb4:.5 C5:.5 Bb4:1 G4:2 G4:.5 Bb4:.5 C5:1.5 C5:.5 Eb5:.75 D5:.25 C5:1 Bb4:.5 C5:.5 D5:1 Eb5:2') },
+    jupiter: { name: 'Holst, Jupiter (the Thaxted tune)', tempo: 72, exact: true, source: 'the tune as quoted (LilyPond) in Wikipedia’s “Thaxted (tune)”, which agrees with the ABC transcription at abcnotation.com, moved from C to E♭ as in Jupiter', notes: tune('G4:.5 Bb4:.5 C5:1.5 Eb5:.5 D5:.75 Bb4:.25 Eb5:.5 F5:.5 Eb5:1 D5:1 C5:.5 D5:.5 C5:1 Bb4:1 G4:2 G4:.5 Bb4:.5 C5:1.5 Eb5:.5 D5:.75 Bb4:.25 Eb5:.5 F5:.5 G5:1 G5:1 G5:.5 F5:.5 Eb5:1 F5:1 Eb5:2') },
     brand3: { name: 'Bach, Brandenburg Concerto 3, approx.', tempo: 100, exact: false, notes: tune('G4:.5 G4:.25 F#4:.25 G4:.5 D4:.5 G4:.5 A4:.25 G4:.25 A4:.5 D4:.5 A4:.5 B4:.25 A4:.25 B4:.5 G4:.5 C5:.5 B4:.5 A4:.5 G4:.5 F#4:.5 G4:.5 A4:.5 D4:1') },
-    waltz: { name: 'Chopin, Minute Waltz, approx.', tempo: 200, exact: false, notes: tune('Ab4:.5 G4:.5 Ab4:.5 C5:.5 Bb4:.5 Ab4:.5 G4:.5 Ab4:.5 C5:.5 Bb4:.5 Ab4:.5 G4:.5 Ab4:.5 C5:.5 Bb4:.5 Ab4:.5 Eb5:.5 Db5:.5 C5:.5 Bb4:.5 Ab4:.5 G4:.5 F4:.5 Eb4:.5 Db4:1.5') },
+    waltz: { name: 'Chopin, Minute Waltz', tempo: 200, exact: true, source: 'right hand, bars 1–12, from the Mutopia Project edition (after Peters), checked against its MIDI file', notes: tune('Ab4:1 G4:.5 Ab4:.5 C5:.5 Bb4:.5 G4:.5 Ab4:.5 Bb4:.5 Ab4:.5 C5:.5 Bb4:.5 G4:.5 Ab4:.5 C5:.5 Bb4:.5 G4:.5 Ab4:.5 C5:.5 Bb4:.5 G4:.5 Ab4:.5 C5:.5 Bb4:.5 G4:.5 Ab4:.5 C5:.5 Bb4:.5 G4:.5 Ab4:.5 C5:.5 Bb4:.5 G4:.5 Ab4:.5 C5:.5 Bb4:.5 G4:.5 Ab4:.5 C5:.5 Bb4:.5 G4:.5 Ab4:.5 Bb4:.5 C5:.5 Db5:.5 Eb5:.5 F5:.5 Gb5:.5 Bb5:1.5 Ab5:.5 Gb5:.5 F5:.5 F5:.5 Eb5:.5 Eb5:.5 D5:.5 Eb5:1 Bb5:1.5 Ab5:.5 Gb5:.5 F5:.5 F5:.5 Eb5:.5 D5:.5 Eb5:.5 F5:.5 Bb4:.5') },
   };
   const NOTE_NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
   const pcColor = pc => hsl(((pc % 12) + 12) % 12 / 12, 0.65, 0.55);
@@ -320,7 +320,7 @@
     }
     const mapName = { chords: 'four-note chord space (Tymoczko)', dyads: 'note pairs on the Clifford torus', fifths: 'note pairs on the Clifford torus, circle of fifths' }[prm.map];
     const rows = [
-      ['Piece', S.T.name + (S.T.exact ? '' : ' (transcribed from memory; may differ from the score)')],
+      ['Piece', S.T.name + (S.T.exact ? (S.T.source ? `: ${S.T.source}` : '') : ' (transcribed from memory; may differ from the score)')],
       ['Mapping', mapName],
       prm.map === 'chords'
         ? ['Axes', 'each run of four notes is a chord, its voices sorted; x, y, z: the chord’s shape (Tymoczko’s tetrahedral space of four-note chords), w: its register, the average pitch along (1,1,1,1). Each step is a voice leading']
