@@ -104,6 +104,15 @@
   .voices .cb { position: relative; height: 6px; border-radius: 3px; background: var(--line); }
   .voices .cb i { position: absolute; top: -2px; width: 4px; height: 10px; border-radius: 2px; margin-left: -2px; }
   .voices .nt { color: var(--fg); }
+  #melBtn[aria-pressed="true"] { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+  .walkers { display: flex; flex-direction: column; gap: 8px; }
+  .walker { border: 1px solid var(--line); border-radius: 7px; padding: 7px 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 5px 8px; font-size: 12px; }
+  .walker.off > :not(.whead) { display: none; }
+  .walker .whead { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .walker .whead i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .walker .whead .wnote { margin-left: auto; font: 12px var(--mono); color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+  .walker label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); }
+  .walker select, .walker input[type=number] { padding: 3px 5px; font: inherit; color: var(--fg); background: var(--chip); border: 1px solid var(--line); border-radius: 5px; min-width: 0; }
   .shapes-box { display: flex; flex-direction: column; gap: 8px; }
   .shapes { display: flex; flex-direction: column; gap: 4px; }
   .shape { display: grid; grid-template-columns: 1fr 88px 24px 18px 24px; gap: 4px; align-items: center; }
@@ -225,6 +234,14 @@
       </div>
     </section>
 
+    <section id="melSec">
+      <span class="label">Melody: walk the vertices</span>
+      <div class="btns"><button type="button" id="melBtn" aria-pressed="false">Play melody</button></div>
+      <div id="melGlobal"></div>
+      <div class="walkers" id="walkers"></div>
+      <p class="hint">Each walker steps through the shape’s vertices along its pattern and sings one view coordinate of where it stands. A still shape repeats its tune; turning it in 4D turns the notes.</p>
+    </section>
+
     <section>
       <span class="label">Centre of rotation</span>
       <div id="pivots"></div>
@@ -286,4 +303,5 @@
 <script src="gpu.js"></script>
 <script src="mp4write.js"></script>
 <script src="music.js"></script>
+<script src="melody.js"></script>
 <script src="app.js"></script>

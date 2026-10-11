@@ -1044,6 +1044,189 @@
     });
   }
 
+  // ---------- melody: walkers stepping through the shape's vertices ----------
+  // The walk is fixed by the shape's own geometry, so a still shape repeats its tune; each note is one view coordinate
+  // of the vertex, so turning the shape in 4D turns the melody.
+  const MEL = { tempo: 96, scale: 'pentatonic', root: -12, range: 2, tone: 'triangle', vol: 0.6 };
+  const WCOL = [[0.98, 0.55, 0.3], [0.4, 0.85, 0.75], [0.68, 0.56, 1], [0.98, 0.85, 0.35]];
+  const PATTERNS = [['straight', 'Straight on'], ['wind', 'Winding'], ['leap', 'Leaping'], ['across', 'Across and back'], ['random', 'Random walk']];
+  const PATTERN_N = { straight: ['', 0, 0], wind: ['Turn rank', 1, 6], leap: ['Stride', 1, 999], across: ['', 0, 0], random: ['Repeats after', 2, 64] };
+  const walkers = [
+    { on: true, pattern: 'straight', axis: 3, rate: 1, play: 'pluck', oct: 0, start: 0, n: 1 },
+    { on: true, pattern: 'leap', axis: 1, rate: 2, play: 'pluck', oct: 1, start: 0, n: 7 },
+    { on: false, pattern: 'across', axis: 0, rate: 0.5, play: 'slide', oct: -1, start: 0, n: 1 },
+    { on: false, pattern: 'random', axis: 2, rate: 1, play: 'pluck', oct: 1, start: 3, n: 16 },
+  ];
+  const rts = walkers.map(() => ({ reset: true, hist: [] }));
+  let melG = null, graph = null;
+  // the vertex graph of the drawn mesh: points joined by edges, with points at the same place merged
+  function buildGraph() {
+    const P = G.pts, E = G.edges, canon = new Map(), id = new Int32Array(G.npts).fill(-1), verts = [], nb = [];
+    const node = i => {
+      if (id[i] >= 0) return id[i];
+      const key = [0, 1, 2, 3].map(k => Math.round(P[i * 4 + k] * 1e5)).join();
+      let v = canon.get(key);
+      if (v === undefined) { v = verts.length; canon.set(key, v); verts.push(i); nb.push(new Set()); }
+      id[i] = v; return v;
+    };
+    for (let k = 0; k < E.length; k += 2) { const a = node(E[k]), b = node(E[k + 1]); if (a !== b) { nb[a].add(b); nb[b].add(a); } }
+    const pos = verts.map(i => [P[i * 4], P[i * 4 + 1], P[i * 4 + 2], P[i * 4 + 3]]);
+    const cen = [0, 1, 2, 3].map(k => pos.reduce((s, p) => s + p[k], 0) / Math.max(1, pos.length));
+    const rmax = Math.max(1e-6, ...pos.map(p => Math.hypot(p[0] - cen[0], p[1] - cen[1], p[2] - cen[2], p[3] - cen[3])));
+    return { pos, nb: nb.map(s => [...s].sort((a, b) => a - b)), cen, rmax, far: new Map() };
+  }
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3]];
+  const dot4 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+  function farthest(v) {
+    let f = graph.far.get(v);
+    if (f === undefined) { let best = -1; graph.pos.forEach((p, i) => { const d = dot4(sub(p, graph.pos[v]), sub(p, graph.pos[v])); if (d > best) { best = d; f = i; } }); graph.far.set(v, f); }
+    return f;
+  }
+  // the neighbour that carries on most nearly straight (rank 0), or the rank-th straightest
+  function onward(cur, prev, rank) {
+    const nbs = graph.nb[cur]; if (!nbs.length) return cur;
+    const cand = nbs.length > 1 ? nbs.filter(n => n !== prev) : nbs;
+    if (prev < 0) return cand[Math.min(rank, cand.length - 1)];
+    const d = sub(graph.pos[cur], graph.pos[prev]), dl = Math.hypot(...d) || 1;
+    const score = n => { const e = sub(graph.pos[n], graph.pos[cur]); return dot4(d, e) / (dl * (Math.hypot(...e) || 1)); };
+    const sorted = cand.map(n => [score(n), n]).sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+    return sorted[Math.min(rank, sorted.length - 1)][1];
+  }
+  function stepWalker(w, rt) {
+    const n = graph.pos.length;
+    if (rt.reset || (w.pattern === 'random' && rt.step >= w.n - 1)) {
+      // (a random walk starts over from the same vertex and seed, so it repeats)
+      rt.cur = ((w.start % n) + n) % n; rt.prev = -1; rt.step = 0; rt.seed = 12345 + w.start; rt.reset = false;
+      return;
+    }
+    const cur = rt.cur;
+    let next;
+    if (w.pattern === 'straight') next = onward(cur, rt.prev, 0);
+    else if (w.pattern === 'wind') next = onward(cur, rt.prev, w.n);
+    else if (w.pattern === 'leap') next = (cur + w.n) % n;
+    else if (w.pattern === 'across') next = rt.step % 2 === 0 ? farthest(cur) : onward(cur, rt.prev, 0);
+    else { rt.seed = (rt.seed * 16807) % 2147483647; const nbs = graph.nb[cur]; next = nbs.length ? nbs[rt.seed % nbs.length] : cur; }
+    rt.prev = cur; rt.cur = next; rt.step++;
+  }
+  // a point's coordinate along the walker's axis in the view, from −1 to 1 across the shape, and its pitch
+  const MSCALES = { off: null, chromatic: [...Array(12).keys()].map(k => 2 ** (k / 12)), major: [0, 2, 4, 5, 7, 9, 11].map(k => 2 ** (k / 12)), pentatonic: [0, 2, 4, 7, 9].map(k => 2 ** (k / 12)), just: [1, 9 / 8, 5 / 4, 4 / 3, 3 / 2, 5 / 3, 15 / 8] };
+  function coordOf(p, axis) {
+    const c = graph.cen; let v = 0;
+    for (let j = 0; j < 4; j++) v += R[axis * 4 + j] * (p[j] - c[j]);
+    return Math.max(-1, Math.min(1, v / graph.rmax));
+  }
+  function pitchOf(c, w) {
+    const tot = (c + 1) / 2 * MEL.range;
+    let oct = Math.floor(tot), r = 2 ** (tot - oct);
+    const S = MSCALES[MEL.scale];
+    if (S) { let best = 1, bd = Infinity; for (const x of [...S, 2]) { const d = Math.abs(Math.log2(r / x)); if (d < bd) { bd = d; best = x; } } r = best; }
+    return 440 * 2 ** (MEL.root / 12) * 2 ** (w.oct + oct) * r;
+  }
+  const melQ = new Float64Array(4), melS = new Float64Array(6);
+  function viewOf(p) { for (let r = 0; r < 4; r++) melQ[r] = R[r * 4] * p[0] + R[r * 4 + 1] * p[1] + R[r * 4 + 2] * p[2] + R[r * 4 + 3] * p[3] + T[r]; return melQ; }
+  let melHud = 0;
+  function melodyFrame() {
+    const playing = window.Melody.running;
+    if (!G || !G.edges.length) { if (playing) walkers.forEach((w, k) => window.Melody.slide(k, 220, MEL.tone, 0, 0.05)); return; }
+    if (G !== melG) { melG = G; graph = buildGraph(); rts.forEach(rt => { rt.reset = true; rt.hist = []; rt.next = 0; }); }
+    if (!graph.pos.length) return;
+    const now = window.Melody.time, beat = 60 / MEL.tempo;
+    window.Melody.setVolume(MEL.vol);
+    walkers.forEach((w, k) => {
+      const rt = rts[k];
+      if (!w.on || !playing) { window.Melody.slide(k, 220, MEL.tone, 0, 0.05); if (!playing) return; if (!w.on) { rt.hist = []; return; } }
+      const dur = beat / w.rate;
+      if (!(rt.next > now - 1)) rt.next = now + 0.05; // (re)starting: begin just ahead of the clock
+      // schedule a little ahead of the audio clock, so the rhythm stays steady whatever the frame rate
+      while (rt.next < now + 0.12) {
+        const from = rt.reset ? -1 : rt.cur;
+        stepWalker(w, rt);
+        if (w.play === 'pluck') window.Melody.pluck(rt.next, pitchOf(coordOf(graph.pos[rt.cur], w.axis), w), dur * 0.95, MEL.tone, 1);
+        rt.hist.push({ t: rt.next, v: rt.cur, from: from < 0 ? rt.cur : from, dur });
+        if (rt.hist.length > 8) rt.hist.shift();
+        rt.next += dur;
+      }
+    });
+    // where each walker is now: on its vertex, or partway along the edge when sliding
+    walkers.forEach((w, k) => {
+      const rt = rts[k];
+      if (!w.on || !rt.hist.length) return;
+      let i = rt.hist.length - 1; while (i > 0 && rt.hist[i].t > now) i--;
+      const h = rt.hist[i], A = graph.pos[h.from], B = graph.pos[h.v];
+      const f = w.play === 'slide' ? Math.max(0, Math.min(1, (now - h.t) / h.dur)) : 1;
+      const p = [0, 1, 2, 3].map(j => A[j] + (B[j] - A[j]) * f);
+      const fr = pitchOf(coordOf(p, w.axis), w);
+      if (w.play === 'slide') window.Melody.slide(k, fr, MEL.tone, 1, 0.02);
+      rt.shown = { p, fr, i };
+    });
+    if (!playing) return;
+    // draw: a ball for each walker and a fading line through the vertices it last visited
+    const mode = state.mode === 'slice' ? 'ortho' : state.p4, c = WCOL;
+    walkers.forEach((w, k) => {
+      const rt = rts[k], sh = rt.shown;
+      if (!w.on || !sh || !rt.hist.length) return;
+      const pts = rt.hist.slice(Math.max(0, sh.i - 5), sh.i + 1).map(h => graph.pos[h.v]);
+      if (w.play === 'slide') { pts.pop(); pts.push(sh.p); }
+      const near = q => state.mode !== 'slice' || Math.abs(q[3] - state.slice) < 0.15;
+      for (let j = 0; j < pts.length - 1; j++) {
+        const a = viewOf(pts[j]); if (!near(a) || !project(a, 0, melS, 0, mode, state.eye4)) continue;
+        const b = viewOf(pts[j + 1]); if (!near(b) || !project(b, 0, melS, 3, mode, state.eye4)) continue;
+        const fade = (j + 1) / pts.length;
+        segTube(melS, 0, melS, 3, 0.006 + 0.008 * fade, c[k][0], c[k][1], c[k][2], 1);
+      }
+      const q = viewOf(sh.p);
+      if (near(q) && project(q, 0, melS, 0, mode, state.eye4)) sphere(melS[0], melS[1], melS[2], 0.045, c[k][0], c[k][1], c[k][2], 1);
+    });
+    if (++melHud % 4) return;
+    walkers.forEach((w, k) => { const el = $('wn' + k); if (el) el.textContent = w.on && rts[k].shown ? window.Music.noteName(rts[k].shown.fr).name : ''; });
+  }
+  // the panel
+  function buildMelodyUI() {
+    const rng = (id, label, min, max, step, val, fmt) => `<div class="row"><label for="${id}">${label}</label><input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}"><output id="${id}O">${fmt(val)}</output></div>`;
+    const opt = (list, v) => list.map(([a, b]) => `<option value="${a}"${String(a) === String(v) ? ' selected' : ''}>${b}</option>`).join('');
+    $('melGlobal').innerHTML = rng('melTempo', 'Tempo', 40, 220, 1, MEL.tempo, v => v) +
+      `<div class="row"><label for="melScale">Notes</label><select id="melScale">${opt([['off', 'Any pitch'], ['chromatic', 'Chromatic'], ['major', 'Major scale'], ['pentatonic', 'Pentatonic'], ['just', 'Just intonation']], MEL.scale)}</select></div>` +
+      rng('melRoot', 'Root', -36, 0, 1, MEL.root, v => window.Music.noteName(440 * 2 ** (v / 12)).name) +
+      rng('melRange', 'Range', 1, 4, 1, MEL.range, v => v + ' oct') +
+      `<div class="row"><label for="melTone">Tone</label><select id="melTone">${opt([['triangle', 'Pluck'], ['sine', 'Soft'], ['reed', 'Reed'], ['glass', 'Glass']], MEL.tone)}</select></div>` +
+      rng('melVol', 'Volume', 0, 1, 0.01, MEL.vol, v => (+v).toFixed(2));
+    const hook = (id, key, num, fmt) => { const el = $(id); el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => { MEL[key] = num ? +el.value : el.value; const o = $(id + 'O'); if (o) o.value = fmt(MEL[key]); }); };
+    hook('melTempo', 'tempo', true, v => v); $('melTempo').parentElement.title = 'Beats per minute'; hook('melScale', 'scale'); hook('melRoot', 'root', true, v => window.Music.noteName(440 * 2 ** (v / 12)).name);
+    hook('melRange', 'range', true, v => v + ' oct'); hook('melTone', 'tone'); hook('melVol', 'vol', true, v => (+v).toFixed(2));
+    const box = $('walkers'); box.innerHTML = '';
+    walkers.forEach((w, k) => {
+      const d = document.createElement('div'); d.className = 'walker' + (w.on ? '' : ' off');
+      const col = `rgb(${WCOL[k].map(x => Math.round(x * 255)).join(',')})`, [nl, nmin, nmax] = PATTERN_N[w.pattern];
+      d.innerHTML = `<div class="whead"><input type="checkbox" data-k="on"${w.on ? ' checked' : ''} aria-label="Walker ${k + 1} on"><i style="background:${col}"></i>Walker ${k + 1}<span class="wnote" id="wn${k}"></span></div>
+        <label>Pattern<select data-k="pattern">${opt(PATTERNS, w.pattern)}</select></label>
+        <label>Sings<select data-k="axis">${opt([[0, 'x'], [1, 'y'], [2, 'z'], [3, 'w']], w.axis)}</select></label>
+        <label>Steps per beat<select data-k="rate">${opt([[0.25, '¼'], [0.5, '½'], [1, '1'], [2, '2'], [3, '3'], [4, '4']], w.rate)}</select></label>
+        <label>Play<select data-k="play">${opt([['pluck', 'Note at each vertex'], ['slide', 'Slide along edges']], w.play)}</select></label>
+        <label>Octave<select data-k="oct">${opt([[-2, '−2'], [-1, '−1'], [0, '0'], [1, '+1'], [2, '+2']], w.oct)}</select></label>
+        <label>Start vertex<input type="number" data-k="start" min="0" step="1" value="${w.start}"></label>
+        ${nl ? `<label>${nl}<input type="number" data-k="n" min="${nmin}" max="${nmax}" step="1" value="${w.n}"></label>` : ''}`;
+      d.querySelectorAll('[data-k]').forEach(el => el.addEventListener('change', () => {
+        const key = el.dataset.k, v = el.type === 'checkbox' ? el.checked : ['pattern', 'play'].includes(key) ? el.value : +el.value;
+        if (key === 'pattern' && PATTERN_N[v][1]) w.n = Math.max(PATTERN_N[v][1], Math.min(PATTERN_N[v][2], w.n));
+        w[key] = v;
+        if (['pattern', 'start', 'n', 'on'].includes(key)) { rts[k].reset = true; rts[k].hist = []; }
+        if (key === 'pattern' || key === 'on') buildMelodyUI();
+      }));
+      box.appendChild(d);
+    });
+  }
+  buildMelodyUI();
+  $('melBtn').onclick = async () => {
+    try {
+      if (window.Melody.on) window.Melody.stop();
+      else { await window.Melody.start(); rts.forEach(rt => { rt.reset = true; rt.hist = []; rt.next = 0; }); }
+    } catch (err) { note('Sound could not start: ' + (err.message || err)); }
+    $('melBtn').setAttribute('aria-pressed', String(window.Melody.on)); $('melBtn').textContent = window.Melody.on ? 'Stop melody' : 'Play melody';
+  };
+  document.addEventListener('visibilitychange', () => window.Melody.setLive(!document.hidden));
+  addEventListener('pagehide', () => window.Melody.close());
+  addEventListener('pageshow', () => { $('melBtn').setAttribute('aria-pressed', String(window.Melody.on)); $('melBtn').textContent = window.Melody.on ? 'Stop melody' : 'Play melody'; });
+
   // ---------- frame ----------
   let last = performance.now(), sweepPhase = 0, frameCount = 0, statT = 0;
   let order = new Uint32Array(0);
@@ -1103,7 +1286,10 @@
       if (state.mode === 'proj') buildProjection(); else buildSlice();
     }
     pivotMarker();
+    // the moving points of the music are drawn over the shape (their triangles come last)
+    const overlayTri = nTri;
     chordFrame(dt);
+    melodyFrame();
 
     if (nTri) {
       const trans = state.surf === 'trans';
@@ -1124,7 +1310,11 @@
       gl.enable(gl.DEPTH_TEST); gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1, 1);
       if (trans) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false); }
       else { gl.disable(gl.BLEND); gl.depthMask(true); }
-      gl.drawArrays(gl.TRIANGLES, 0, nTri * 3);
+      if (!trans && overlayTri < nTri) {
+        gl.drawArrays(gl.TRIANGLES, 0, overlayTri * 3);
+        gl.clear(gl.DEPTH_BUFFER_BIT);
+        gl.drawArrays(gl.TRIANGLES, overlayTri * 3, (nTri - overlayTri) * 3);
+      } else gl.drawArrays(gl.TRIANGLES, 0, nTri * 3);
       gl.disable(gl.POLYGON_OFFSET_FILL); gl.depthMask(true);
     }
     gl.useProgram(lineProg);
