@@ -116,6 +116,11 @@
 
   function shapeData(o, prm, time) {
     if (o.kind === 'bh') return blackHoleData(prm);
+    if (o.kind === 'chord') {
+      // its fibre, as a Hopf tube
+      const th = prm.lat * DEG, ph = prm.lon * DEG;
+      return { type: T_HOPF, texels: [O.fibrePoint(th, ph, 0), O.fibrePoint(th, ph, Math.PI / 2)], c1: 1, c2: 0, prm: [prm.tube, 0, 0, 0] };
+    }
     if (o.kind === 'mtn') return mountainData(prm);
     if (o.kind === 'tree') return treeData(prm);
     if (o.kind === 'poly') return polytopeData(o.id);

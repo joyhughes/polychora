@@ -96,6 +96,14 @@
   .legend .bar { width: 160px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, #3d4ed6, #1fb5b0, #f2c14e, #ee5d4a); }
   .legend .ends { display: flex; justify-content: space-between; }
   .wread { font: 500 15px var(--mono); color: var(--fg); }
+  .music { position: absolute; left: 14px; top: 12px; display: flex; flex-direction: column; gap: 8px; font: 12px var(--mono); color: var(--muted); background: color-mix(in srgb, var(--panel) 82%, transparent); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 270px; }
+  .music button { align-self: flex-start; padding: 5px 12px; font-weight: 600; }
+  .music button[aria-pressed="true"] { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+  .voices { display: grid; grid-template-columns: 14px 1fr 70px 76px; gap: 5px 8px; align-items: center; font-variant-numeric: tabular-nums; }
+  .voices b { color: var(--fg); font-weight: 600; }
+  .voices .cb { position: relative; height: 6px; border-radius: 3px; background: var(--line); }
+  .voices .cb i { position: absolute; top: -2px; width: 4px; height: 10px; border-radius: 2px; margin-left: -2px; }
+  .voices .nt { color: var(--fg); }
   .shapes-box { display: flex; flex-direction: column; gap: 8px; }
   .shapes { display: flex; flex-direction: column; gap: 4px; }
   .shape { display: grid; grid-template-columns: 1fr 88px 24px 18px 24px; gap: 4px; align-items: center; }
@@ -122,6 +130,7 @@
     .app { grid-template-columns: 1fr; grid-template-rows: 56vh auto; height: auto; }
     main { height: 56vh; order: -1; }
     aside { border-right: 0; border-top: 1px solid var(--line); overflow: visible; }
+    .music { min-width: 0; padding: 8px 10px; }
   }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -260,6 +269,10 @@
         <div class="ends"><span>kata −w</span><span>ana +w</span></div>
       </div>
     </div>
+    <div class="music" id="music" hidden>
+      <button type="button" id="soundBtn" aria-pressed="false">Sound on</button>
+      <div class="voices" id="voices"></div>
+    </div>
     <div class="stats" id="stats"></div>
     <div class="rec" id="recBadge" hidden></div>
     <div class="err" id="err" hidden></div>
@@ -272,4 +285,5 @@
 <script src="scene.js"></script>
 <script src="gpu.js"></script>
 <script src="mp4write.js"></script>
+<script src="music.js"></script>
 <script src="app.js"></script>

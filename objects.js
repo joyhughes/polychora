@@ -26,10 +26,11 @@
     tri(a, b, c, col) { this.tris.push(a, b, c); this.triCol.push(col[0], col[1], col[2]); }
     tet(a, b, c, d, col, ctr = -1) { this.tets.push(a, b, c, d); this.tetCol.push(col[0], col[1], col[2]); this.tetCtr.push(ctr); }
     edge(a, b) { this.edges.push(a, b); }
-    curve(points, closed, col) {
+    // w: this curve's tube radius as a share of the mesh's
+    curve(points, closed, col, w = 1) {
       const start = this.pts.length / 4;
       for (const p of points) this.pt(p);
-      this.curves.push({ start, n: points.length, closed, col });
+      this.curves.push({ start, n: points.length, closed, col, w });
     }
     done(extra) {
       return {
@@ -203,6 +204,38 @@
     return M.done({
       sliceTube: prm.tube * 0.5, tubeR: prm.tube,
       info: { name: 'Hopf fibration', sub: 'S¹ → S³ → S²', counts: [['fibres', base.length], ['rings', rings.length || '—'], ['segs', prm.segs], ['tori', prm.tori && rings.length ? rings.length : 0]], rows },
+    });
+  }
+
+  // ---------------- Hopf chord ----------------
+  // A point travels round one Hopf fibre, the great circle over the point (θ, φ) of S²:
+  //   (cos(θ/2) cos(t + φ), cos(θ/2) sin(t + φ), sin(θ/2) cos t, sin(θ/2) sin t)
+  // Its four coordinates are four voices (music.js). The fibre lies on the Hopf torus over its circle of latitude;
+  // the other fibres of that torus are drawn thinly beside it.
+  function chord(prm) {
+    const M = new Mesh(), th = prm.lat * DEG, ph = prm.lon * DEG, N = 192;
+    const pts = [];
+    for (let i = 0; i < N; i++) pts.push(fibrePoint(th, ph, TAU * i / N));
+    M.curve(pts, true, hopfColor(pts[0]));
+    if (prm.torus) {
+      // the other fibres over the same circle of latitude: together they fill the Hopf torus |z₁| = cos(θ/2)
+      for (let k = 1; k < prm.fibres; k++) {
+        const p2 = ph + TAU * k / prm.fibres, ring = [];
+        for (let i = 0; i < 96; i++) ring.push(fibrePoint(th, p2, TAU * i / 96));
+        M.curve(ring, true, hopfColor(ring[0]).map(c => c * 0.75 + 0.08), 0.35);
+      }
+    }
+    const a = Math.cos(th / 2), b = Math.sin(th / 2);
+    const rows = [
+      ['Path', `the Hopf fibre over (θ, φ) = (${prm.lat}°, ${prm.lon}°) on S², a great circle of S³`],
+      ['Voices', `x and y swing through ±${a.toFixed(2)}, z and w through ±${b.toFixed(2)}; each pair a quarter turn apart`],
+      ['Pitch', 'each coordinate from −1 to +1 sweeps one octave of its voice'],
+      ['Chord', 'x² + y² + z² + w² = 1 at every moment: the four voices always share one unit of “length”'],
+      ['Sound', 'press Sound on (top left of the view); the orbit runs while the spin plays'],
+    ];
+    return M.done({
+      sliceTube: prm.tube * 0.6, tubeR: prm.tube,
+      info: { name: 'Hopf chord', sub: `a 4D point singing its coordinates`, counts: [['voices', 4], ['orbit', prm.period + ' s'], ['fibres', prm.torus ? prm.fibres : 1], ['latitude', prm.lat + '°']], rows },
     });
   }
 
@@ -754,6 +787,6 @@
     });
   }
 
-  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS, blackHole, blackHoleShape, photon, kerrPhoton };
+  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS, blackHole, blackHoleShape, photon, kerrPhoton, chord };
   if (typeof module !== 'undefined') module.exports = root.Objects;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -11,6 +11,7 @@
   OBJECTS.push({ key: 'clifford', label: 'Clifford torus', group: 'Surfaces & fibrations in S³', kind: 'clifford', s3: true });
   OBJECTS.push({ key: 'blackhole', label: 'Black hole (curved 3D space)', group: 'Curved space', kind: 'bh' });
   OBJECTS.push({ key: 'hopf', label: 'Hopf fibration', group: 'Surfaces & fibrations in S³', kind: 'hopf', s3: true });
+  OBJECTS.push({ key: 'chord', label: 'Hopf chord (4D music)', group: 'Surfaces & fibrations in S³', kind: 'chord', s3: true });
   for (const [k, F] of Object.entries(O.FRACTALS)) OBJECTS.push({ key: 'frac:' + k, label: F.name, group: 'Sierpinski fractals', kind: 'frac', id: k });
   OBJECTS.push({ key: 'mountain', label: 'Fractal mountain', group: 'Fractal nature', kind: 'mtn' });
   OBJECTS.push({ key: 'tree', label: 'L-system tree', group: 'Fractal nature', kind: 'tree' });
@@ -49,6 +50,22 @@
       { id: 'height', label: 'Height', min: 0.3, max: 1.3, step: 0.01, def: 0.85, fmt: 2 },
       { id: 'sea', label: 'Sea level', min: -0.48, max: 0.4, step: 0.01, def: -0.25, fmt: 2 },
       { id: 'snow', label: 'Snow line', min: 0.3, max: 1, step: 0.01, def: 0.72, fmt: 2, title: 'Share of the way from sea level to the summit' },
+    ];
+    if (o.kind === 'chord') return [
+      { id: 'lat', label: 'Latitude θ', min: 0, max: 180, step: 1, def: 70, unit: '°', title: 'Which fibre: its base point on S². θ sets how far x, y swing (cos θ/2) against z, w (sin θ/2)' },
+      { id: 'lon', label: 'Longitude φ', min: 0, max: 360, step: 1, def: 0, unit: '°', title: 'Shifts x, y against z, w along the orbit' },
+      { id: 'period', label: 'Orbit', min: 2, max: 60, step: 0.5, def: 12, fmt: 1, unit: ' s', title: 'Seconds for one trip round the fibre' },
+      { id: 'root', label: 'Root', min: -36, max: 0, step: 1, def: -24, title: 'Bottom of the lowest voice, in semitones from A4 (−24 is A2, 110 Hz)' },
+      { id: 'spread', label: 'Voice gap', min: 0, max: 1.5, step: 0.05, def: 1, fmt: 2, title: 'Octaves between the voices’ ranges (0: all four share one octave)' },
+      { id: 'snap', label: 'Notes', type: 'select', options: [['off', 'Glide (any pitch)'], ['chromatic', 'Chromatic'], ['major', 'Major scale'], ['pentatonic', 'Pentatonic'], ['just', 'Just intonation']], def: 'off' },
+      { id: 'wave', label: 'Tone', type: 'select', options: [['sine', 'Sine'], ['triangle', 'Triangle'], ['warm', 'Reed'], ['glass', 'Glass']], def: 'warm' },
+      { id: 'loud', label: 'Loudness', type: 'select', options: [['equal', 'Equal voices'], ['square', 'Coordinate², summing to 1']], def: 'equal', title: 'With coordinate², a voice fades as its coordinate passes 0, and the total never changes' },
+      { id: 'listen', label: 'Listen to', type: 'select', options: [['shape', 'The shape’s coordinates'], ['view', 'The view (spin changes the chord)']], def: 'shape' },
+      { id: 'vol', label: 'Volume', min: 0, max: 1, step: 0.01, def: 0.5, fmt: 2 },
+      { id: 'glide', label: 'Glide', min: 0.005, max: 0.5, step: 0.005, def: 0.03, fmt: 3, unit: ' s', title: 'How quickly each voice slides to its next pitch' },
+      { id: 'torus', label: 'Hopf torus', type: 'check', def: true, title: 'The torus the fibre lies on, with its other fibres' },
+      { id: 'fibres', label: 'Fibres', min: 2, max: 32, step: 1, def: 12, show: p => p.torus },
+      { id: 'tube', label: 'Tube radius', min: 0.004, max: 0.05, step: 0.001, def: 0.016, fmt: 3 },
     ];
     if (o.kind === 'bh') return [
       { id: 'rs', label: 'Horizon rₛ', min: 0.08, max: 0.6, step: 0.01, def: 0.28, fmt: 2, title: 'Schwarzschild radius 2GM/c²' },
@@ -531,7 +548,8 @@
     if (scene.shapes.length === 1 && (!was || was.s3 !== o.s3 || was.kind !== o.kind || !G)) {
       if (o.s3) { state.p4 = 'stereo'; state.dist = 7.5; }
       else { if (state.p4 === 'stereo') state.p4 = 'persp'; state.dist = 3.7; }
-      if (o.kind === 'hopf') state.col = 'flat'; // fibres coloured by their point on S²
+      if (o.kind === 'hopf' || o.kind === 'chord') state.col = 'flat'; // fibres coloured by their point on S²
+      if (o.kind === 'chord' && state.renderer !== 'gpu') state.mode = 'proj';
       // the mountain keeps its own colours and keeps y up: it turns about the vertical and through w
       // a slice of the tree only meets the branches that cross it, so it opens in projection to show the whole tree
       if (o.kind === 'bh') { state.col = 'flat'; state.spin = [0, 0.12, 0, 0, 0, 0]; state.dist = 3.6; state.pitch = 0.45; }
@@ -597,7 +615,7 @@
   }
   function placeholderInfo(o) {
     const c = o.kind === 'poly' && P.CATALOG.find(c => c.id === o.id);
-    const labels = o.kind === 'poly' ? ['cells', 'faces', 'edges', 'verts'] : o.kind === 'frac' ? ['copies', 'cells', 'faces', 'verts'] : o.kind === 'hopf' ? ['fibres', 'rings', 'segs', 'tori'] : o.kind === 'mtn' ? ['grid', 'summit', 'tets', 'verts'] : o.kind === 'tree' ? ['branches', 'leaves', 'tets', 'verts'] : o.kind === 'bh' ? ['rays', 'fall in', 'tets', 'layers'] : ['grid', 'tris', 'tets', 'curves'];
+    const labels = o.kind === 'poly' ? ['cells', 'faces', 'edges', 'verts'] : o.kind === 'frac' ? ['copies', 'cells', 'faces', 'verts'] : o.kind === 'hopf' ? ['fibres', 'rings', 'segs', 'tori'] : o.kind === 'mtn' ? ['grid', 'summit', 'tets', 'verts'] : o.kind === 'tree' ? ['branches', 'leaves', 'tets', 'verts'] : o.kind === 'bh' ? ['rays', 'fall in', 'tets', 'layers'] : o.kind === 'chord' ? ['voices', 'orbit', 'fibres', 'latitude'] : ['grid', 'tris', 'tets', 'curves'];
     return { name: shortName(o), sub: c ? c.sym : '', counts: labels.map(l => [l, '…']), rows: [] };
   }
   // the spinner beside the symbol while a build is pending (after a short delay, so quick ones do not flicker)
@@ -968,6 +986,58 @@
     if (state.ghost) { edgeLines(1, false); curveLines(1, false); }
   }
 
+  // ---------- Hopf chord: a point on a fibre, sounding its four coordinates ----------
+  const chordP = new Float64Array(4), chordQ = new Float64Array(4), chordS = new Float64Array(3);
+  let chordPhase = 0, chordHud = 0;
+  const VOICE_COL = [[0.95, 0.45, 0.35], [0.96, 0.78, 0.3], [0.35, 0.8, 0.7], [0.5, 0.62, 0.98]];
+  $('voices').innerHTML = ['x', 'y', 'z', 'w'].map((n, k) => `<b style="color:rgb(${VOICE_COL[k].map(c => Math.round(c * 255)).join(',')})">${n}</b><div class="cb"><i id="vb${k}" style="background:rgb(${VOICE_COL[k].map(c => Math.round(c * 255)).join(',')})"></i></div><span class="nt" id="vn${k}"></span><span id="vf${k}"></span>`).join('');
+  $('soundBtn').onclick = async () => {
+    try {
+      if (window.Music.on) window.Music.stop(); else await window.Music.start();
+    } catch (err) { note('Sound could not start: ' + (err.message || err)); }
+    $('soundBtn').setAttribute('aria-pressed', String(window.Music.on)); $('soundBtn').textContent = window.Music.on ? 'Sound off' : 'Sound on';
+  };
+  // the point's place on the fibre, in the shape's coordinates (P) and in the view (Q, after placement and pose)
+  function chordPoint(prm, phase, sh, P, Q) {
+    const th = prm.lat * Math.PI / 180, ph = prm.lon * Math.PI / 180, a = Math.cos(th / 2), b = Math.sin(th / 2);
+    P[0] = a * Math.cos(phase + ph); P[1] = a * Math.sin(phase + ph); P[2] = b * Math.cos(phase); P[3] = b * Math.sin(phase);
+    const pl = window.CSG.placement(sh.place), w = [0, 1, 2, 3].map(r => pl.off[r] + pl.s * (pl.R[r * 4] * P[0] + pl.R[r * 4 + 1] * P[1] + pl.R[r * 4 + 2] * P[2] + pl.R[r * 4 + 3] * P[3]));
+    for (let r = 0; r < 4; r++) Q[r] = R[r * 4] * w[0] + R[r * 4 + 1] * w[1] + R[r * 4 + 2] * w[2] + R[r * 4 + 3] * w[3] + T[r];
+  }
+  function chordFrame(dt) {
+    const sh = scene.shapes.find(s => s.visible && objOf(s.key).kind === 'chord');
+    $('music').hidden = !sh;
+    if (!sh) { if (window.Music.on) { window.Music.stop(); $('soundBtn').setAttribute('aria-pressed', 'false'); $('soundBtn').textContent = 'Sound on'; } return; }
+    const prm = shapePrm(sh);
+    if (state.playing) chordPhase = (chordPhase + dt * 2 * Math.PI / prm.period) % (2 * Math.PI);
+    chordPoint(prm, chordPhase, sh, chordP, chordQ);
+    const coords = prm.listen === 'view' ? (() => { const l = Math.hypot(...chordQ) || 1; return [...chordQ].map(v => v / l); })() : [...chordP];
+    const freqs = window.Music.frequencies(coords, prm);
+    const amps = prm.loud === 'square' ? coords.map(c => c * c * 2) : [1, 1, 1, 1];
+    window.Music.update(freqs, amps, prm.vol, prm.wave, prm.glide);
+    // the point and a fading trail behind it (in a slice, only where they cross the slice)
+    if (state.renderer !== 'gpu' || state.mode === 'slice') {
+      const mode = state.mode === 'slice' ? 'ortho' : state.p4, sc = state.p4 === 'stereo' && state.mode !== 'slice' ? 1.6 : 1;
+      for (let j = 24; j >= 0; j--) {
+        chordPoint(prm, chordPhase - j * 0.035, sh, chordP, chordQ);
+        let r = (j ? 0.022 * (1 - j / 26) : 0.05) * sc;
+        if (state.mode === 'slice') r *= Math.max(0, 1 - Math.abs(chordQ[3] - state.slice) / 0.12);
+        if (r <= 0.002 || !project(chordQ, 0, chordS, 0, mode, state.eye4)) continue;
+        const k = 1 - j / 25;
+        sphere(chordS[0], chordS[1], chordS[2], r * (mode === 'stereo' ? 1 : 1), 0.98 * k + 0.4 * (1 - k), 0.96 * k + 0.5 * (1 - k), 0.85 * k + 0.75 * (1 - k), 1);
+      }
+      chordPoint(prm, chordPhase, sh, chordP, chordQ);
+    }
+    // the readout, a few times a second
+    if (++chordHud % 4) return;
+    coords.forEach((c, k) => {
+      const nn = window.Music.noteName(freqs[k]);
+      $('vb' + k).style.left = (50 + 50 * Math.max(-1, Math.min(1, c))) + '%';
+      $('vn' + k).textContent = nn.name + (prm.snap === 'off' || prm.snap === 'just' ? (nn.cents >= 0 ? ' +' : ' −') + Math.abs(nn.cents) + '¢' : '');
+      $('vf' + k).textContent = freqs[k].toFixed(1) + ' Hz';
+    });
+  }
+
   // ---------- frame ----------
   let last = performance.now(), sweepPhase = 0, frameCount = 0, statT = 0;
   let order = new Uint32Array(0);
@@ -1027,6 +1097,7 @@
       if (state.mode === 'proj') buildProjection(); else buildSlice();
     }
     pivotMarker();
+    chordFrame(dt);
 
     if (nTri) {
       const trans = state.surf === 'trans';

@@ -432,7 +432,7 @@
       for (let t = 0; t < M.tris.length / 3; t++) { o.tris.push(M.tris[t * 3], M.tris[t * 3 + 1], M.tris[t * 3 + 2]); o.triCol.push(...colour(M.triCol, t * 3)); o.triTube.push(sliceR); }
       for (let t = 0; t < M.tets.length / 4; t++) { o.tets.push(M.tets[t * 4], M.tets[t * 4 + 1], M.tets[t * 4 + 2], M.tets[t * 4 + 3]); o.tetCol.push(...colour(M.tetCol, t * 3)); o.tetCtr.push(M.tetCtr[t]); }
       for (let e = 0; e < M.edges.length; e++) o.edges.push(M.edges[e]);
-      for (const c of M.curves) o.curves.push({ start: c.start, n: c.n, closed: c.closed, col: tint ? colour(c.col, 0) : c.col, r: tubeR });
+      for (const c of M.curves) o.curves.push({ start: c.start, n: c.n, closed: c.closed, col: tint ? colour(c.col, 0) : c.col, r: tubeR * (c.w || 1) });
       return o;
     }
     function copyInto(src, out) {
