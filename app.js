@@ -1251,7 +1251,7 @@
   async function toggleTune() {
     if (tune.on) { tune.on = false; tuneButton(); if (!walkOn) window.Melody.stop(); return; }
     try { await window.Melody.start(); } catch (err) { note('Sound could not start: ' + (err.message || err)); return; }
-    Object.assign(tune, { on: true, shape: selShape(), i: 0, next: window.Melody.time + 0.1, hist: [] });
+    Object.assign(tune, { on: true, shape: selShape(), S: null, i: 0, next: window.Melody.time + 0.1, hist: [] });
     tuneButton();
   }
   const tuneQ = new Float64Array(4), tuneS = new Float64Array(6);
@@ -1266,6 +1266,8 @@
     if (!scene.shapes.includes(sh) || objOf(sh.key).kind !== 'melody' || !sh.visible) { tune.on = false; tuneButton(); return; }
     const prm = shapePrm(sh), S = O.melodyShape(prm), notes = S.T.notes, beat = 60 / (S.T.tempo * prm.tempoX), now = window.Melody.time;
     if (!window.Melody.running) return;
+    // a new piece or mapping while playing: start that tune from its beginning
+    if (tune.S !== S) { tune.S = S; tune.i = 0; tune.hist = []; tune.next = Math.max(tune.next, now + 0.1); }
     while (tune.next < now + 0.12) {
       if (tune.i >= notes.length) { if (!prm.loop) { if (now > tune.next) { tune.on = false; tuneButton(); } break; } tune.i = 0; tune.next += beat; }
       const [m, b] = notes[tune.i];
@@ -1275,7 +1277,7 @@
     }
     // the ball sits on the last point whose notes have all sounded
     let h = null; for (const e of tune.hist) if (e.t <= now) h = e;
-    if (!h) return;
+    if (!h || !notes[h.i]) return;
     let k = -1; for (let j = 0; j < S.last.length; j++) if (S.last[j] <= h.i) k = j;
     if (k < 0) return;
     const mode = state.mode === 'slice' ? 'ortho' : state.p4, col = O.hsl((notes[h.i][0] % 12) / 12, 0.7, 0.62);
@@ -1293,7 +1295,10 @@
   let last = performance.now(), sweepPhase = 0, frameCount = 0, statT = 0;
   let order = new Uint32Array(0);
   let frameMs = 16;
+  const frameFaults = new Set();
   function frame(now) {
+    // ask for the next frame first, so an error anywhere below cannot stop the animation
+    requestAnimationFrame(frame);
     frameMs = frameMs * 0.9 + (now - last) * 0.1;
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
     if (state.playing) {
@@ -1350,9 +1355,10 @@
     pivotMarker();
     // the moving points of the music are drawn over the shape (their triangles come last)
     const overlayTri = nTri;
-    chordFrame(dt);
-    melodyFrame();
-    tuneFrame();
+    // the music's extras must never stop the drawing: a fault in one is reported once and that frame's part skipped
+    for (const [name, f] of [['chord', () => chordFrame(dt)], ['melody', melodyFrame], ['tune', tuneFrame]]) {
+      try { f(); } catch (err) { if (!frameFaults.has(name)) { frameFaults.add(name); console.error(`${name} overlay:`, err); } }
+    }
 
     if (nTri) {
       const trans = state.surf === 'trans';
@@ -1405,7 +1411,6 @@
     if (shooting) { shotScale = 0; finishSnapshot(); }
     if (rec?.frame) rec.frame(now);
     if (rec) { const s = Math.floor((now - recStart) / 1000); $('recBadge').textContent = `● REC ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
-    requestAnimationFrame(frame);
   }
 
   // ---------- pointer ----------
