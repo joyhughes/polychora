@@ -46,6 +46,19 @@
     g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(peak, t + 0.008);
     g.gain.setTargetAtTime(peak * 0.35, t + 0.01, dur * 0.25); g.gain.setTargetAtTime(0, end - 0.04, 0.02);
     o.connect(g); g.connect(out); o.start(t); o.stop(end + 0.1);
+    return { o, g, t, end };
+  }
+  // cut notes short: ones still to come never start, ones sounding fade out at once
+  function cancel(notes) {
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    for (const n of notes) {
+      if (n.end < now) continue;
+      try {
+        if (n.t > now) { n.o.stop(); n.o.disconnect(); }
+        else { n.g.gain.cancelScheduledValues(now); n.g.gain.setTargetAtTime(0, now, 0.015); n.o.stop(now + 0.08); }
+      } catch { /* already stopped */ }
+    }
   }
   // a held voice k that slides to freq (level 0 silences it)
   function slide(k, freq, tone, level, glide) {
@@ -57,5 +70,5 @@
     s.o.frequency.setTargetAtTime(freq, t, Math.max(0.005, glide));
     s.g.gain.setTargetAtTime(playing() ? 0.2 * level : 0, t, 0.05);
   }
-  root.Melody = { start, stop, setLive, close, pluck, slide, setVolume, get on() { return on; }, get time() { return ctx ? ctx.currentTime : 0; }, get running() { return playing(); } };
+  root.Melody = { start, stop, setLive, close, pluck, cancel, slide, setVolume, get on() { return on; }, get time() { return ctx ? ctx.currentTime : 0; }, get running() { return playing(); } };
 })(typeof window !== 'undefined' ? window : globalThis);

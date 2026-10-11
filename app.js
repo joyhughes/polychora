@@ -1142,7 +1142,12 @@
   const melQ = new Float64Array(4), melS = new Float64Array(6);
   function viewOf(p) { for (let r = 0; r < 4; r++) melQ[r] = R[r * 4] * p[0] + R[r * 4 + 1] * p[1] + R[r * 4 + 2] * p[2] + R[r * 4 + 3] * p[3] + T[r]; return melQ; }
   let melHud = 0;
-  let walkOn = false; // the walkers play only when asked (the tune player shares the audio)
+  let walkOn = false, walkNotes = []; // the walkers play only when asked (the tune player shares the audio)
+  function stopWalkers() {
+    walkOn = false; window.Melody.cancel(walkNotes); walkNotes = [];
+    walkers.forEach((w, k) => window.Melody.slide(k, 220, MEL.tone, 0, 0.02));
+    $('melBtn').setAttribute('aria-pressed', 'false'); $('melBtn').textContent = 'Play melody';
+  }
   function melodyFrame() {
     const playing = window.Melody.running && walkOn;
     if (!G || !G.edges.length) { if (playing) walkers.forEach((w, k) => window.Melody.slide(k, 220, MEL.tone, 0, 0.05)); return; }
@@ -1159,7 +1164,7 @@
       while (rt.next < now + 0.12) {
         const from = rt.reset ? -1 : rt.cur;
         stepWalker(w, rt);
-        if (w.play === 'pluck') window.Melody.pluck(rt.next, pitchOf(coordOf(graph.pos[rt.cur], w.axis), w), dur * 0.95, MEL.tone, 1);
+        if (w.play === 'pluck') { const nt = window.Melody.pluck(rt.next, pitchOf(coordOf(graph.pos[rt.cur], w.axis), w), dur * 0.95, MEL.tone, 1); if (nt) { walkNotes.push(nt); if (walkNotes.length > 48) walkNotes = walkNotes.filter(x => x.end > now); } }
         rt.hist.push({ t: rt.next, v: rt.cur, from: from < 0 ? rt.cur : from, dur });
         if (rt.hist.length > 8) rt.hist.shift();
         rt.next += dur;
@@ -1236,8 +1241,13 @@
   buildMelodyUI();
   $('melBtn').onclick = async () => {
     try {
-      if (walkOn) { walkOn = false; if (!tune.on) window.Melody.stop(); }
-      else { await window.Melody.start(); walkOn = true; rts.forEach(rt => { rt.reset = true; rt.hist = []; rt.next = 0; }); }
+      if (walkOn) { stopWalkers(); if (!tune.on) window.Melody.stop(); }
+      else {
+        await window.Melody.start();
+        // one melody at a time: the walkers take over from a playing tune
+        if (tune.on) stopTune();
+        walkOn = true; rts.forEach(rt => { rt.reset = true; rt.hist = []; rt.next = 0; });
+      }
     } catch (err) { note('Sound could not start: ' + (err.message || err)); }
     $('melBtn').setAttribute('aria-pressed', String(walkOn)); $('melBtn').textContent = walkOn ? 'Stop melody' : 'Play melody';
   };
@@ -1246,11 +1256,14 @@
   addEventListener('pageshow', () => { walkOn = walkOn && window.Melody.on; tune.on = tune.on && window.Melody.on; $('melBtn').setAttribute('aria-pressed', String(walkOn)); $('melBtn').textContent = walkOn ? 'Stop melody' : 'Play melody'; tuneButton(); });
 
   // ---------- playing a melody shape: the tune sounds while a ball follows its path ----------
-  const tune = { on: false, shape: null, i: 0, next: 0, hist: [] };
+  const tune = { on: false, shape: null, i: 0, next: 0, hist: [], sounding: [] };
+  function stopTune() { tune.on = false; window.Melody.cancel(tune.sounding); tune.sounding = []; tuneButton(); }
   function tuneButton() { const b = $('prm-play'); if (b) { b.textContent = tune.on ? 'Stop the tune' : 'Play the tune'; b.setAttribute('aria-pressed', String(tune.on)); } }
   async function toggleTune() {
-    if (tune.on) { tune.on = false; tuneButton(); if (!walkOn) window.Melody.stop(); return; }
+    if (tune.on) { stopTune(); if (!walkOn) window.Melody.stop(); return; }
     try { await window.Melody.start(); } catch (err) { note('Sound could not start: ' + (err.message || err)); return; }
+    // one melody at a time: the tune takes over from the vertex walkers
+    if (walkOn) stopWalkers();
     Object.assign(tune, { on: true, shape: selShape(), S: null, i: 0, next: window.Melody.time + 0.1, hist: [] });
     tuneButton();
   }
@@ -1263,15 +1276,16 @@
   function tuneFrame() {
     if (!tune.on) return;
     const sh = tune.shape;
-    if (!scene.shapes.includes(sh) || objOf(sh.key).kind !== 'melody' || !sh.visible) { tune.on = false; tuneButton(); return; }
+    if (!scene.shapes.includes(sh) || objOf(sh.key).kind !== 'melody' || !sh.visible) { stopTune(); return; }
     const prm = shapePrm(sh), S = O.melodyShape(prm), notes = S.T.notes, beat = 60 / (S.T.tempo * prm.tempoX), now = window.Melody.time;
     if (!window.Melody.running) return;
     // a new piece or mapping while playing: start that tune from its beginning
-    if (tune.S !== S) { tune.S = S; tune.i = 0; tune.hist = []; tune.next = Math.max(tune.next, now + 0.1); }
+    if (tune.S !== S) { window.Melody.cancel(tune.sounding); tune.sounding = []; tune.S = S; tune.i = 0; tune.hist = []; tune.next = now + 0.1; }
     while (tune.next < now + 0.12) {
-      if (tune.i >= notes.length) { if (!prm.loop) { if (now > tune.next) { tune.on = false; tuneButton(); } break; } tune.i = 0; tune.next += beat; }
+      if (tune.i >= notes.length) { if (!prm.loop) { if (now > tune.next) stopTune(); break; } tune.i = 0; tune.next += beat; }
       const [m, b] = notes[tune.i];
-      window.Melody.pluck(tune.next, 440 * 2 ** ((m - 69) / 12), b * beat * 0.92, 'reed', 0.9);
+      const nt = window.Melody.pluck(tune.next, 440 * 2 ** ((m - 69) / 12), b * beat * 0.92, 'reed', 0.9);
+      if (nt) { tune.sounding.push(nt); if (tune.sounding.length > 32) tune.sounding = tune.sounding.filter(x => x.end > now); }
       tune.hist.push({ t: tune.next, i: tune.i }); if (tune.hist.length > 16) tune.hist.shift();
       tune.next += b * beat; tune.i++;
     }
