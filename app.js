@@ -134,7 +134,7 @@
   const PLANES = [['XY', 0, 1], ['XZ', 0, 2], ['YZ', 1, 2], ['XW', 0, 3], ['YW', 1, 3], ['ZW', 2, 3]];
   const state = {
     key: 'poly:grand-600', mode: 'slice', surf: 'solid', col: 'depth', p4: 'persp', p3: 'persp',
-    edges: true, ghost: false, opacity: 0.18, eye4: 2.6, slice: 0, sweep: true, sweepSp: 0.25,
+    edges: true, ghost: false, opacity: 0.18, ball: 1, eye4: 2.6, slice: 0, sweep: true, sweepSp: 0.25,
     spin: [0, 0, 0.12, 0.3, 0, 0.18], playing: true, pivot: [0, 0, 0, 0], marker: true, renderer: 'mesh', gpuQ: 'medium',
     yaw: 0.5, pitch: -0.35, dist: 3.7,
   };
@@ -286,9 +286,11 @@
 
   function syncUI() {
     sel.value = state.key;
+    if (state.renderer === 'gpu' && state.surf === 'balls') state.surf = 'solid';
     for (const n of ['mode', 'surf', 'col', 'p4', 'p3']) document.querySelector(`input[name=${n}][value=${state[n]}]`).checked = true;
     $('edges').checked = state.edges; $('ghost').checked = state.ghost; $('sweep').checked = state.sweep;
     $('opacity').value = state.opacity; $('opacityO').value = state.opacity.toFixed(2);
+    $('ball').value = state.ball; $('ballO').value = state.ball.toFixed(2);
     $('eye4').value = state.eye4; $('eye4O').value = state.eye4.toFixed(2);
     $('slice').value = state.slice; $('sliceO').value = state.slice.toFixed(3);
     $('sweepSp').value = state.sweepSp; $('sweepSpO').value = state.sweepSp.toFixed(2);
@@ -297,14 +299,14 @@
     const gpu = state.renderer === 'gpu';
     // the ray tracer draws the slice
     if (gpu) state.mode = 'slice';
-    $('m-proj').disabled = gpu; $('gpuRow').hidden = !gpu; $('gpuHint').hidden = !gpu;
+    $('m-proj').disabled = gpu; $('s-balls').disabled = gpu; $('ballHint').hidden = !gpu; $('gpuRow').hidden = !gpu; $('gpuHint').hidden = !gpu;
     $('gpuQ').value = state.gpuQ;
     document.querySelector(`input[name=rend][value=${state.renderer}]`).checked = true;
     document.querySelector('input[name=mode][value=' + state.mode + ']').checked = true;
     const slice = state.mode === 'slice';
     $('sliceSec').hidden = !slice; $('projSec').hidden = slice; $('ghostL').hidden = !slice;
     $('eyeRow').hidden = state.p4 !== 'persp'; $('stereoHint').hidden = state.p4 !== 'stereo';
-    $('opRow').hidden = state.surf !== 'trans';
+    $('opRow').hidden = state.surf !== 'trans'; $('ballRow').hidden = state.surf !== 'balls'; $('edges').parentElement.hidden = state.surf === 'balls';
     $('legend').hidden = state.col !== 'depth';
     $('wread').hidden = !slice;
     $('play').textContent = state.playing ? 'Pause' : 'Play';
@@ -325,7 +327,7 @@
   $('edges').addEventListener('change', e => { state.edges = e.target.checked; });
   $('ghost').addEventListener('change', e => { state.ghost = e.target.checked; });
   $('sweep').addEventListener('change', e => { state.sweep = e.target.checked; if (state.sweep) sweepPhase = Math.asin(Math.max(-1, Math.min(1, state.slice / 0.999))); });
-  for (const k of ['opacity', 'eye4', 'sweepSp']) $(k).addEventListener('input', e => { state[k] = +e.target.value; syncUI(); });
+  for (const k of ['opacity', 'ball', 'eye4', 'sweepSp']) $(k).addEventListener('input', e => { state[k] = +e.target.value; syncUI(); });
   $('slice').addEventListener('input', e => { state.slice = +e.target.value; state.sweep = false; syncUI(); });
   sel.addEventListener('change', () => select(sel.value));
   const step = d => { const i = OBJECTS.findIndex(o => o.key === state.key); select(OBJECTS[(i + d + OBJECTS.length) % OBJECTS.length].key); };
@@ -617,6 +619,18 @@
     const m = r.G;
     m.q = new Float64Array(m.npts * 4); m.p3 = new Float64Array(m.npts * 3); m.ok = new Uint8Array(m.npts);
     m.ctrs = Int32Array.from(new Set(Array.from(m.tetCtr).filter(c => c >= 0)));
+    // balls view: the edges' end points, their flat colours, and the typical gap between neighbouring vertices,
+    // which sizes the balls (not the edge length: a star polytope's edges are long chords)
+    const pt = i => [m.pts[i * 4], m.pts[i * 4 + 1], m.pts[i * 4 + 2], m.pts[i * 4 + 3]];
+    m.bv = Int32Array.from(new Set(m.edges)); m.bvAt = new Int32Array(m.npts).fill(-1); m.bv.forEach((i, k) => { m.bvAt[i] = k; });
+    m.bvCol = Float32Array.from(O.spreadHopf(Array.from(m.bv, pt)).flatMap(([h, l]) => O.hsl(h, 0.62, l)));
+    const nb = m.bv.length, step = Math.max(1, Math.floor(nb / 300)), gaps = [];
+    for (let a = 0; a < nb; a += step) {
+      const p = pt(m.bv[a]); let g = Infinity;
+      for (let b = 0; b < nb; b++) { if (b === a) continue; const o = m.bv[b] * 4, d = Math.hypot(p[0] - m.pts[o], p[1] - m.pts[o + 1], p[2] - m.pts[o + 2], p[3] - m.pts[o + 3]); if (d > 1e-9 && d < g) g = d; }
+      if (g < Infinity) gaps.push(g);
+    }
+    gaps.sort((x, y) => x - y); m.edgeLen = gaps.length ? gaps[gaps.length >> 1] : 0.3;
     G = m; lastInfos = r.infos; lastBuildMs = r.ms;
     showInfo();
   }
@@ -802,14 +816,16 @@
     let F = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
     const nv = v => { const l = Math.hypot(...v); return v.map(x => x / l); };
     V = V.map(nv);
+    const lo = { V, F };
     const mid = new Map(), m = (a, b) => { const k = a < b ? a + '_' + b : b + '_' + a; if (!mid.has(k)) { mid.set(k, V.length); V.push(nv(V[a].map((x, i) => (x + V[b][i]) / 2))); } return mid.get(k); };
     F = F.flatMap(([a, b, c]) => { const ab = m(a, b), bc = m(b, c), ca = m(c, a); return [[a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]]; });
-    return { V, F };
+    return { V, F, lo };
   })();
-  function sphere(x, y, z, r, cr, cg, cb, alpha) {
-    for (const f of SPHERE.F) {
+  function sphere(x, y, z, r, cr, cg, cb, alpha, coarse = false) {
+    const S = coarse ? SPHERE.lo : SPHERE;
+    for (const f of S.F) {
       for (let v = 0; v < 3; v++) {
-        const p = SPHERE.V[f[v]];
+        const p = S.V[f[v]];
         TV[v * 3] = x + r * p[0]; TV[v * 3 + 1] = y + r * p[1]; TV[v * 3 + 2] = z + r * p[2];
         TN[v * 3] = p[0]; TN[v * 3 + 1] = p[1]; TN[v * 3 + 2] = p[2];
       }
@@ -910,8 +926,8 @@
   let runIdx = new Int32Array(1024);
   function buildProjection() {
     const { tris, triCol, q, p3, ok, curves } = G;
-    const depth = state.col === 'depth', trans = state.surf === 'trans', alpha = trans ? state.opacity : 1;
-    if (state.surf !== 'wire') {
+    const depth = state.col === 'depth', trans = state.surf === 'trans', alpha = trans ? state.opacity : 1, balls = state.surf === 'balls';
+    if (state.surf !== 'wire' && !balls) {
       for (let t = 0; t < tris.length; t += 3) {
         const a = tris[t], b = tris[t + 1], c = tris[t + 2];
         if (!ok[a] || !ok[b] || !ok[c]) continue;
@@ -922,7 +938,8 @@
         commit(alpha);
       }
     }
-    if (state.edges || state.surf === 'wire') edgeLines(0, depth);
+    if (balls) ballsProjection(depth);
+    else if (state.edges || state.surf === 'wire') edgeLines(0, depth);
     if (!curves.length) return;
     if (state.surf === 'wire') { curveLines(0, depth); return; }
     const ta = trans ? Math.min(1, 0.35 + state.opacity * 2) : 1;
@@ -954,11 +971,12 @@
   const sliceCol = new Float64Array(3);
   function buildSlice() {
     const { tets, tetCol, tetCtr, tris, triCol, q, curves } = G, s = state.slice;
-    const depth = state.col === 'depth', trans = state.surf === 'trans', wire = state.surf === 'wire';
+    const depth = state.col === 'depth', trans = state.surf === 'trans', wire = state.surf === 'wire', balls = state.surf === 'balls';
     const alpha = trans ? Math.min(1, state.opacity * 1.6) : 1;
     depthColor(s, sliceCol, 0);
     const v = [0, 0, 0, 0], above = [false, false, false, false], A = [0, 0], B = [0, 0];
-    if (!wire) {
+    if (balls) ballsSlice(depth);
+    else if (!wire) {
       for (let t = 0; t < tets.length / 4; t++) {
         let na = 0;
         for (let k = 0; k < 4; k++) { v[k] = tets[t * 4 + k]; above[k] = q[v[k] * 4 + 3] > s; if (above[k]) na++; }
@@ -984,8 +1002,8 @@
     }
     // surface triangles: their cut is a curve. Pure surfaces draw it as a tube; solids draw it as an outline.
     const triTube = G.triTube;
-    if (G.hasTube || state.edges || wire) {
-      const [base, a] = edgeStyle(0), outline = state.edges || wire;
+    if (G.hasTube || ((state.edges || wire) && !balls)) {
+      const [base, a] = edgeStyle(0), outline = (state.edges || wire) && !balls;
       const up = [false, false, false], f = [0, 0, 0];
       for (let t = 0; t < tris.length; t += 3) {
         const tr = triTube[t / 3];
@@ -1015,6 +1033,57 @@
       }
     }
     if (state.ghost) { edgeLines(1, false); curveLines(1, false); }
+  }
+
+  // ---------- balls: spheres at the vertices, tubes along the edges ----------
+  // Sizes follow the gap between neighbouring vertices, so a shape with many close vertices does not drown in its balls.
+  // A vertex is a 4D ball and an edge a 4D tube: in a slice the ball shows as a sphere that swells and shrinks as
+  // the hyperplane passes the vertex, and the tube as a sphere where the edge crosses it.
+  const ballRadii = () => [G.edgeLen * 0.18 * state.ball, G.edgeLen * 0.07 * state.ball];
+  function ballCol(i, depth, out, o) {
+    if (depth) { depthColor(G.q[i * 4 + 3], out, o); return; }
+    const k = G.bvAt[i] * 3; out[o] = G.bvCol[k]; out[o + 1] = G.bvCol[k + 1]; out[o + 2] = G.bvCol[k + 2];
+  }
+  // how much the 4D → 3D projection magnifies at depth w
+  function projScale(w) {
+    if (state.p4 === 'persp') return (state.eye4 - 1) / Math.max(1e-3, state.eye4 - w);
+    if (state.p4 === 'stereo') return STEREO_K / Math.max(1e-3, 1 - w);
+    return 1;
+  }
+  const edgeIdx = new Int32Array(2);
+  function ballsProjection(depth) {
+    const { edges, bv, q, p3, ok } = G, [rv, re] = ballRadii(), coarse = bv.length > 1500;
+    for (const i of bv) {
+      if (!ok[i]) continue;
+      ballCol(i, depth, vcol, 0);
+      sphere(p3[i * 3], p3[i * 3 + 1], p3[i * 3 + 2], rv * projScale(q[i * 4 + 3]), vcol[0], vcol[1], vcol[2], 1, coarse);
+    }
+    const col = (k, out, o) => ballCol(edgeIdx[k], depth, out, o);
+    for (let k = 0; k < edges.length; k += 2) {
+      const i = edges[k], j = edges[k + 1];
+      if (!ok[i] || !ok[j]) continue;
+      edgeIdx[0] = i; edgeIdx[1] = j;
+      tube(edgeIdx, 2, false, re * 0.5 * (projScale(q[i * 4 + 3]) + projScale(q[j * 4 + 3])), col, 1);
+    }
+  }
+  function ballsSlice(depth) {
+    const { edges, bv, q } = G, s = state.slice, [rv, re] = ballRadii(), coarse = bv.length > 1500;
+    for (const i of bv) {
+      const d = q[i * 4 + 3] - s;
+      if (Math.abs(d) >= rv) continue;
+      ballCol(i, depth, vcol, 0);
+      sphere(q[i * 4], q[i * 4 + 1], q[i * 4 + 2], Math.sqrt(rv * rv - d * d), vcol[0], vcol[1], vcol[2], 1, coarse);
+    }
+    for (let k = 0; k < edges.length; k += 2) {
+      const i = edges[k], j = edges[k + 1], wi = q[i * 4 + 3], wj = q[j * 4 + 3];
+      if ((wi > s) === (wj > s)) continue;
+      cross(i, j, s, 0);
+      // flat: blend the ends' colours; depth: where the edge lies on the whole, by its midpoint
+      const t = (s - wi) / (wj - wi);
+      if (depth) depthColor((wi + wj) / 2, vcol, 0);
+      else { ballCol(i, false, vcol, 0); ballCol(j, false, vcol, 3); for (let c = 0; c < 3; c++) vcol[c] += (vcol[c + 3] - vcol[c]) * t; }
+      sphere(ix[0], ix[1], ix[2], re * 1.6, vcol[0], vcol[1], vcol[2], 1, coarse);
+    }
   }
 
   // ---------- Hopf chord: a point on a fibre, sounding its four coordinates ----------

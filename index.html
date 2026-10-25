@@ -189,8 +189,11 @@
         <input type="radio" name="surf" id="s-solid" value="solid" checked><label for="s-solid">Solid</label>
         <input type="radio" name="surf" id="s-trans" value="trans"><label for="s-trans">Translucent</label>
         <input type="radio" name="surf" id="s-wire" value="wire"><label for="s-wire">Wire</label>
+        <input type="radio" name="surf" id="s-balls" value="balls"><label for="s-balls" title="Spheres at the vertices and tubes along the edges; in a slice, a sphere where each edge crosses it">Balls</label>
       </div>
       <div class="row" id="opRow"><label for="opacity">Opacity</label><input type="range" id="opacity" min="0.03" max="0.8" step="0.01" value="0.18"><output id="opacityO"></output></div>
+      <div class="row" id="ballRow"><label for="ball">Ball size</label><input type="range" id="ball" min="0.3" max="3" step="0.05" value="1"><output id="ballO"></output></div>
+      <p class="hint" id="ballHint" hidden>The ray tracer has no balls view: the mesh renderer draws them.</p>
       <div class="seg" role="radiogroup">
         <input type="radio" name="col" id="c-flat" value="flat"><label for="c-flat">Flat colour</label>
         <input type="radio" name="col" id="c-depth" value="depth" checked><label for="c-depth">4D depth</label>
