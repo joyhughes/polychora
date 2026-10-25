@@ -326,7 +326,10 @@
   $('gpuQ').addEventListener('change', e => { state.gpuQ = e.target.value; });
   $('edges').addEventListener('change', e => { state.edges = e.target.checked; });
   $('ghost').addEventListener('change', e => { state.ghost = e.target.checked; });
-  $('sweep').addEventListener('change', e => { state.sweep = e.target.checked; if (state.sweep) sweepPhase = Math.asin(Math.max(-1, Math.min(1, state.slice / 0.999))); });
+  $('sweep').addEventListener('change', e => {
+    state.sweep = e.target.checked;
+    if (state.sweep) { const [lo, hi] = sweepRange(); sweepPhase = Math.asin(Math.max(-1, Math.min(1, (state.slice - (lo + hi) / 2) / (0.999 * (hi - lo) / 2)))); }
+  });
   for (const k of ['opacity', 'ball', 'eye4', 'sweepSp']) $(k).addEventListener('input', e => { state[k] = +e.target.value; syncUI(); });
   $('slice').addEventListener('input', e => { state.slice = +e.target.value; state.sweep = false; syncUI(); });
   sel.addEventListener('change', () => select(sel.value));
@@ -619,6 +622,11 @@
     const m = r.G;
     m.q = new Float64Array(m.npts * 4); m.p3 = new Float64Array(m.npts * 3); m.ok = new Uint8Array(m.npts);
     m.ctrs = Int32Array.from(new Set(Array.from(m.tetCtr).filter(c => c >= 0)));
+    // bounding sphere, which the slice sweep spans: centred on the points' centroid (the true centre of a symmetric shape)
+    m.bc = [0, 0, 0, 0]; m.br = 0;
+    for (let i = 0; i < m.npts * 4; i++) m.bc[i & 3] += m.pts[i] / m.npts;
+    for (let i = 0; i < m.npts; i++) m.br = Math.max(m.br, Math.hypot(m.pts[i * 4] - m.bc[0], m.pts[i * 4 + 1] - m.bc[1], m.pts[i * 4 + 2] - m.bc[2], m.pts[i * 4 + 3] - m.bc[3]));
+    if (!(m.br > 0)) m.br = 1;
     // balls view: the edges' end points, their flat colours, and the typical gap between neighbouring vertices,
     // which sizes the balls (not the edge length: a star polytope's edges are long chords)
     const pt = i => [m.pts[i * 4], m.pts[i * 4 + 1], m.pts[i * 4 + 2], m.pts[i * 4 + 3]];
@@ -1389,6 +1397,12 @@
   }
 
   // ---------- frame ----------
+  // the w range of the object's bounding sphere as it now sits in the view
+  function sweepRange() {
+    if (!G) return [-1, 1];
+    const c = G.bc, w = R[12] * c[0] + R[13] * c[1] + R[14] * c[2] + R[15] * c[3] + T[3];
+    return [w - G.br, w + G.br];
+  }
   let last = performance.now(), sweepPhase = 0, frameCount = 0, statT = 0;
   let order = new Uint32Array(0);
   let frameMs = 16;
@@ -1416,10 +1430,16 @@
       if (turned && mesh) dirty = true;
     }
     if (dirty && !inFlight) { dirty = false; rebuild(); }
-    if (state.mode === 'slice' && state.sweep && state.playing) {
-      sweepPhase += dt * state.sweepSp * 2;
-      state.slice = 0.999 * Math.sin(sweepPhase);
-      $('slice').value = state.slice; $('sliceO').value = state.slice.toFixed(3);
+    if (state.mode === 'slice') {
+      // the slider reaches at least ±1 and always across the object
+      const [lo, hi] = sweepRange(), sl = $('slice'), mn = (Math.floor(Math.min(-1, lo) * 100) / 100).toString(), mx = (Math.ceil(Math.max(1, hi) * 100) / 100).toString();
+      if (sl.min !== mn) sl.min = mn;
+      if (sl.max !== mx) sl.max = mx;
+      if (state.sweep && state.playing) {
+        sweepPhase += dt * state.sweepSp * 2;
+        state.slice = (lo + hi) / 2 + 0.999 * (hi - lo) / 2 * Math.sin(sweepPhase);
+        sl.value = state.slice; $('sliceO').value = state.slice.toFixed(3);
+      }
     }
     if (state.mode === 'slice') $('wread').textContent = `w = ${state.slice >= 0 ? '+' : '−'}${Math.abs(state.slice).toFixed(3)}`;
 
