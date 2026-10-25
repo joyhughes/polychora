@@ -18,6 +18,19 @@
     const x = 2 * (a * c + b * d), y = 2 * (b * c - a * d), z = a * a + b * b - c * c - d * d;
     return hsl((Math.atan2(y, x) / TAU + 1) % 1, 0.62, 0.5 + 0.16 * z);
   }
+  // Hopf colours for a set of points, with the hues spread evenly round the circle in Hopf order, so a shape with
+  // few cells (whose centres the Hopf map sends to a few places: all eight of the tesseract's to its poles) still
+  // shows the whole range. Returns [hue, lightness] per point.
+  function spreadHopf(pts) {
+    const H = pts.map(p => {
+      const l = Math.hypot(p[0], p[1], p[2], p[3]) || 1, a = p[0] / l, b = p[1] / l, c = p[2] / l, d = p[3] / l;
+      const x = 2 * (a * c + b * d), y = 2 * (b * c - a * d), z = a * a + b * b - c * c - d * d;
+      return { h: Math.abs(z) > 0.999 ? (z > 0 ? 0 : 0.5) : (Math.atan2(y, x) / TAU + 1) % 1, z };
+    });
+    const order = H.map((_, i) => i).sort((i, j) => H[i].h - H[j].h || H[i].z - H[j].z || i - j), out = [];
+    order.forEach((i, r) => { out[i] = [(r + 0.5) / order.length, 0.5 + 0.16 * H[i].z]; });
+    return out;
+  }
   const gcd = (a, b) => (b ? gcd(b, a % b) : Math.abs(a));
 
   class Mesh {
@@ -47,7 +60,7 @@
     const T = Poly.polytope(id), s = T.spec, sh = prm.shrink ?? 1;
     const M = new Mesh(), star = s.face === 'pentagram', exploded = sh < 0.999;
     const faceCtr = T.faces.map(f => { const c = [0, 0, 0, 0]; for (const i of f) for (let k = 0; k < 4; k++) c[k] += T.verts[i][k] / f.length; return c; });
-    const faceCol = faceCtr.map(hopfColor), cellCol = T.cells.map(c => hopfColor(c.center));
+    const faceCol = spreadHopf(faceCtr).map(([h, l]) => hsl(h, 0.62, l)), cellCol = spreadHopf(T.cells.map(c => c.center)).map(([h, l]) => hsl(h, 0.62, l));
     const gmap = new Map(), gfc = new Map(), faceDone = new Set();
     T.cells.forEach((cell, ci) => {
       const C = cell.center, vmap = exploded ? new Map() : gmap;
@@ -915,6 +928,6 @@
     });
   }
 
-  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS, blackHole, blackHoleShape, photon, kerrPhoton, chord, TUNES, melodyShape, melodyMesh, hull4 };
+  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, spreadHopf, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS, blackHole, blackHoleShape, photon, kerrPhoton, chord, TUNES, melodyShape, melodyMesh, hull4 };
   if (typeof module !== 'undefined') module.exports = root.Objects;
 })(typeof window !== 'undefined' ? window : globalThis);

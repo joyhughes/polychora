@@ -537,8 +537,11 @@
 
   // ---------- colours ----------
   const DEPTH_STOPS = [[0x3d, 0x4e, 0xd6], [0x1f, 0xb5, 0xb0], [0xf2, 0xc1, 0x4e], [0xee, 0x5d, 0x4a]].map(c => c.map(x => x / 255));
-  function depthColor(w, out, o) {
-    const t = Math.max(0, Math.min(1, (w + 1) / 2)) * (DEPTH_STOPS.length - 1);
+  // w is placed in a range [mid − r, mid + r] that spans the shape, so every shape uses the whole palette:
+  // DV for its points, DC for its cell centres (which sit far inside a star polytope). Both turn with the shape.
+  const DV = [0, 1], DC = [0, 1];
+  function depthColor(w, out, o, rng = DV) {
+    const t = Math.max(0, Math.min(1, ((w - rng[0]) / rng[1] + 1) / 2)) * (DEPTH_STOPS.length - 1);
     const k = Math.min(DEPTH_STOPS.length - 2, Math.floor(t)), f = t - k, a = DEPTH_STOPS[k], b = DEPTH_STOPS[k + 1];
     out[o] = a[0] + (b[0] - a[0]) * f; out[o + 1] = a[1] + (b[1] - a[1]) * f; out[o + 2] = a[2] + (b[2] - a[2]) * f;
   }
@@ -613,6 +616,7 @@
   function applyBuild(r) {
     const m = r.G;
     m.q = new Float64Array(m.npts * 4); m.p3 = new Float64Array(m.npts * 3); m.ok = new Uint8Array(m.npts);
+    m.ctrs = Int32Array.from(new Set(Array.from(m.tetCtr).filter(c => c >= 0)));
     G = m; lastInfos = r.infos; lastBuildMs = r.ms;
     showInfo();
   }
@@ -834,6 +838,16 @@
       q[o] += t0; q[o + 1] += t1; q[o + 2] += t2; q[o + 3] += t3;
       ok[i] = project(q, o, p3, i * 3, mode, D);
     }
+    depthRange(q, null, npts, DV); depthRange(q, G.ctrs, G.ctrs.length, DC);
+  }
+  // the centroid's w and the largest distance from the centroid: the same however the shape is turned
+  function depthRange(q, idx, n, rng) {
+    if (!n) { rng[0] = 0; rng[1] = 1; return; }
+    const c = [0, 0, 0, 0];
+    for (let k = 0; k < n; k++) { const o = (idx ? idx[k] : k) * 4; for (let r = 0; r < 4; r++) c[r] += q[o + r] / n; }
+    let m = 0;
+    for (let k = 0; k < n; k++) { const o = (idx ? idx[k] : k) * 4; m = Math.max(m, (q[o] - c[0]) ** 2 + (q[o + 1] - c[1]) ** 2 + (q[o + 2] - c[2]) ** 2 + (q[o + 3] - c[3]) ** 2); }
+    rng[0] = c[3]; rng[1] = Math.max(1e-6, Math.sqrt(m));
   }
   function project(q, o, out, j, mode, D) {
     const qw = q[o + 3];
@@ -950,7 +964,7 @@
         for (let k = 0; k < 4; k++) { v[k] = tets[t * 4 + k]; above[k] = q[v[k] * 4 + 3] > s; if (above[k]) na++; }
         if (na === 0 || na === 4) continue;
         let r, g, b;
-        if (depth) { const c = tetCtr[t]; if (c >= 0) { depthColor(q[c * 4 + 3], vcol, 0); r = vcol[0]; g = vcol[1]; b = vcol[2]; } else { r = sliceCol[0]; g = sliceCol[1]; b = sliceCol[2]; } }
+        if (depth) { const c = tetCtr[t]; if (c >= 0) { depthColor(q[c * 4 + 3], vcol, 0, DC); r = vcol[0]; g = vcol[1]; b = vcol[2]; } else { r = sliceCol[0]; g = sliceCol[1]; b = sliceCol[2]; } }
         else { r = tetCol[t * 3]; g = tetCol[t * 3 + 1]; b = tetCol[t * 3 + 2]; }
         if (na === 1 || na === 3) {
           let n = 0;

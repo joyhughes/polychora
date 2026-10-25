@@ -27,8 +27,8 @@
   function polytopeData(id) {
     const T = P.polytope(id);
     if (T.spec.kind !== 'star') {
-      const tx = [];
-      T.cells.forEach((c, i) => { const h = Math.hypot(...c.center); tx.push(c.center.map(x => x / h), [h, i, 0, 0]); });
+      const tx = [], col = O.spreadHopf(T.cells.map(c => c.center));
+      T.cells.forEach((c, i) => { const h = Math.hypot(...c.center); tx.push(c.center.map(x => x / h), [h, i, ...col[i]]); });
       return { type: T_CONVEX, texels: tx, c1: T.cells.length, c2: 0, prm: [0, 0, 0, 0] };
     }
     // star: per cell a header (normal; h, hull start, hull count, tet start; tet count), the cone sides over the
@@ -62,8 +62,8 @@
       head.push({ n, h, hs, hc: hulls.length - hs, ts, tc: (tets.length - ts) / 4 });
     }
     // layout: headers (3 texels each), hull sides, tet sides
-    const H = head.length * 3, tx = [];
-    head.forEach((c, i) => tx.push(c.n, [c.h, H + c.hs, c.hc, H + hulls.length + c.ts], [c.tc, i, 0, 0]));
+    const H = head.length * 3, tx = [], col = O.spreadHopf(T.cells.map(c => c.center));
+    head.forEach((c, i) => tx.push(c.n, [c.h, H + c.hs, c.hc, H + hulls.length + c.ts], [c.tc, i, ...col[i]]));
     tx.push(...hulls, ...tets);
     return { type: T_STAR, texels: tx, c1: head.length, c2: 0, prm: [0, 0, 0, 0] };
   }
@@ -540,7 +540,9 @@
       }
     } else {
       nl = tex(idx);
-      own = vec4(hopfColor(ty == ${T_STAR} ? tex(e.y) : nl), 1.0);
+      // a polytope's cells carry their own (hue, lightness); other convex shapes leave them zero
+      vec2 hl = ty == ${T_STAR} ? tex(e.y + 2).zw : ty == ${T_CONVEX} ? tex(idx + 1).zw : vec2(0);
+      own = vec4(hl.y > 0.0 ? hsl(hl.x, 0.62, hl.y) : hopfColor(ty == ${T_STAR} ? tex(e.y) : nl), 1.0);
       if (ty == ${T_CONVEX} && uEdges > 0.5) {
         // distance to the nearest other cell plane: small near a ridge, which is an edge of the slice
         float best = -1e9;
