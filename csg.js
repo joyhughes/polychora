@@ -6,6 +6,7 @@
 //   mountain          the height above the ground, against the floor and the sides of the ground
 //   melody            the convex hull of the points a tune visits
 //   L-system tree     the least over its branches (icosahedral prisms) and leaves (16-cells)
+//   cathedrals        the least over their convex parts (cathedrals.js)
 // Every boundary is made of flat pieces, so each field can also report the hyperplane it is resting on.
 // Surfaces and curves (Clifford torus, Hopf fibres) have no inside: they are clipped but cut nothing.
 //
@@ -247,6 +248,7 @@
     if (o.kind === 'frac') return { f: fractalField(o.id, prm), lip: 1 };
     if (o.kind === 'mtn') return { f: mountainField(prm), lip: 1 };
     if (o.kind === 'tree') return { f: treeField(prm), lip: 1 };
+    if (o.kind === 'cath') return { f: Obj.cathedralField(o.id, prm), lip: 1 };
     if (o.kind === 'melody' && prm.hull) {
       // the convex hull of the melody's points: the most of its cells' plane values
       const F = Obj.melodyShape(prm).facets; if (!F) return null;
@@ -442,7 +444,7 @@
         for (let r = 0; r < 4; r++) o.pts.push(off[r] + s * (R[r * 4] * x0 + R[r * 4 + 1] * x1 + R[r * 4 + 2] * x2 + R[r * 4 + 3] * x3));
       }
       const sliceR = (M.sliceTube || 0) * s, tubeR = (M.tubeR || 0.03) * s;
-      for (let t = 0; t < M.tris.length / 3; t++) { o.tris.push(M.tris[t * 3], M.tris[t * 3 + 1], M.tris[t * 3 + 2]); o.triCol.push(...colour(M.triCol, t * 3)); o.triTube.push(sliceR); }
+      for (let t = 0; t < M.tris.length / 3; t++) { o.tris.push(M.tris[t * 3], M.tris[t * 3 + 1], M.tris[t * 3 + 2]); o.triCol.push(...colour(M.triCol, t * 3)); o.triTube.push(M.triSmooth && M.triSmooth[t] ? -1 : sliceR); }
       for (let t = 0; t < M.tets.length / 4; t++) { o.tets.push(M.tets[t * 4], M.tets[t * 4 + 1], M.tets[t * 4 + 2], M.tets[t * 4 + 3]); o.tetCol.push(...colour(M.tetCol, t * 3)); o.tetCtr.push(M.tetCtr[t]); }
       for (let e = 0; e < M.edges.length; e++) o.edges.push(M.edges[e]);
       for (const c of M.curves) o.curves.push({ start: c.start, n: c.n, closed: c.closed, col: tint ? colour(c.col, 0) : c.col, r: tubeR * (c.w || 1) });

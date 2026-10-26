@@ -16,6 +16,7 @@
   for (const [k, F] of Object.entries(O.FRACTALS)) OBJECTS.push({ key: 'frac:' + k, label: F.name, group: 'Sierpinski fractals', kind: 'frac', id: k });
   OBJECTS.push({ key: 'mountain', label: 'Fractal mountain', group: 'Fractal nature', kind: 'mtn' });
   OBJECTS.push({ key: 'tree', label: 'L-system tree', group: 'Fractal nature', kind: 'tree' });
+  for (const [k, c] of Object.entries(O.CATHEDRALS)) OBJECTS.push({ key: 'cath:' + k, label: c.name, group: '4D cathedrals', kind: 'cath', id: k });
 
   const rings = p => p.pattern === 'rings';
   function paramDefs(o) {
@@ -93,6 +94,10 @@
       { id: 'planes', label: 'Ray planes', min: 1, max: 6, step: 1, def: 1, show: p => !p.kerr, title: 'Planes through the beam’s axis, turned about it (a spinning hole keeps its rays on the equator)' },
       { id: 'beam', label: 'Beam width', min: 0.2, max: 3, step: 0.01, def: 1.6, fmt: 2, title: 'Widest impact parameter, in units of the capture limit (3√3/2) rₛ' },
       { id: 'tube', label: 'Ray radius', min: 0.003, max: 0.03, step: 0.001, def: 0.008, fmt: 3 },
+    ];
+    if (o.kind === 'cath') return [
+      { id: 'detail', label: 'Detail', min: 1, max: 3, step: 1, def: 2, title: 'How round the domes, towers and columns are' },
+      ...(O.CATHEDRALS[o.id].grounds ? [{ id: 'grounds', label: 'Grounds', type: 'check', def: true, title: 'The square, bell tower or baptistery around the church' }] : []),
     ];
     if (o.kind === 'tree') {
       const P0 = O.LSYS_PRESETS.tetra, edited = { custom: true };
@@ -526,7 +531,7 @@
   function initialPose() {
     const M = ident4();
     if (cur().s3) { rotWorld(M, 1, 2, 0.5); return M; } // keep the torus axes readable in stereographic view
-    if (cur().kind === 'mtn' || cur().kind === 'tree') { rotWorld(M, 0, 2, 0.5); return M; }
+    if (cur().kind === 'mtn' || cur().kind === 'tree' || cur().kind === 'cath') { rotWorld(M, 0, 2, 0.5); return M; }
     // the black hole's depth w points up the screen, and slices go across y, so y = 0 is the textbook funnel
     if (cur().kind === 'bh') { rotWorld(M, 1, 3, -Math.PI / 2); rotWorld(M, 0, 2, 0.4); return M; } // up stays up, and slices start straight across w
     rotWorld(M, 0, 3, 0.31); rotWorld(M, 1, 2, 0.23); rotWorld(M, 2, 3, 0.17); rotWorld(M, 0, 1, 0.11); return M;
@@ -579,8 +584,9 @@
       // a slice of the tree only meets the branches that cross it, so it opens in projection to show the whole tree
       if (o.kind === 'bh') { state.col = 'flat'; state.spin = [0, 0.12, 0, 0, 0, 0]; state.dist = 3.6; state.pitch = 0.45; }
       else if (o.kind === 'tree') { state.col = 'flat'; if (state.renderer !== 'gpu') state.mode = 'proj'; state.spin = [0, 0.15, 0, 0, 0, 0]; state.dist = 3.9; state.pitch = 0.25; }
+      else if (o.kind === 'cath') { state.col = 'flat'; state.mode = 'slice'; state.slice = 0; state.sweep = false; state.spin = [0, 0.12, 0, 0, 0, 0.04]; state.dist = 3.4; state.pitch = 0.3; }
       else if (o.kind === 'mtn') { state.col = 'flat'; state.mode = 'slice'; state.spin = [0, 0.15, 0, 0, 0, 0]; state.dist = 4.3; state.pitch = 0.5; }
-      else if (was && (was.kind === 'mtn' || was.kind === 'tree' || was.kind === 'bh')) { state.col = 'depth'; state.spin = [0, 0, 0.12, 0.3, 0, 0.18]; state.pitch = -0.35; }
+      else if (was && (was.kind === 'mtn' || was.kind === 'tree' || was.kind === 'bh' || was.kind === 'cath')) { state.col = 'depth'; state.spin = [0, 0, 0.12, 0.3, 0, 0.18]; state.pitch = -0.35; }
       R = initialPose(); T = [0, 0, 0, 0];
     }
     buildParamUI(); buildShapeList(); showInfo(); dirty = true; syncUI();
@@ -658,7 +664,7 @@
   }
   function placeholderInfo(o) {
     const c = o.kind === 'poly' && P.CATALOG.find(c => c.id === o.id);
-    const labels = o.kind === 'poly' ? ['cells', 'faces', 'edges', 'verts'] : o.kind === 'frac' ? ['copies', 'cells', 'faces', 'verts'] : o.kind === 'hopf' ? ['fibres', 'rings', 'segs', 'tori'] : o.kind === 'mtn' ? ['grid', 'summit', 'tets', 'verts'] : o.kind === 'tree' ? ['branches', 'leaves', 'tets', 'verts'] : o.kind === 'bh' ? ['rays', 'fall in', 'tets', 'layers'] : o.kind === 'chord' ? ['voices', 'orbit', 'fibres', 'latitude'] : o.kind === 'melody' ? ['notes', 'points', 'cells', 'steps'] : ['grid', 'tris', 'tets', 'curves'];
+    const labels = o.kind === 'poly' ? ['cells', 'faces', 'edges', 'verts'] : o.kind === 'frac' ? ['copies', 'cells', 'faces', 'verts'] : o.kind === 'hopf' ? ['fibres', 'rings', 'segs', 'tori'] : o.kind === 'mtn' ? ['grid', 'summit', 'tets', 'verts'] : o.kind === 'tree' ? ['branches', 'leaves', 'tets', 'verts'] : o.kind === 'bh' ? ['rays', 'fall in', 'tets', 'layers'] : o.kind === 'chord' ? ['voices', 'orbit', 'fibres', 'latitude'] : o.kind === 'melody' ? ['notes', 'points', 'cells', 'steps'] : o.kind === 'cath' ? ['parts', 'cells', 'round', 'height'] : ['grid', 'tris', 'tets', 'curves'];
     return { name: shortName(o), sub: c ? c.sym : '', counts: labels.map(l => [l, '…']), rows: [] };
   }
   // the spinner beside the symbol while a build is pending (after a short delay, so quick ones do not flicker)
@@ -1009,13 +1015,14 @@
       }
     }
     // surface triangles: their cut is a curve. Pure surfaces draw it as a tube; solids draw it as an outline.
+    // a tube radius below 0 marks a facet of a round part, whose outline is not an edge
     const triTube = G.triTube;
     if (G.hasTube || ((state.edges || wire) && !balls)) {
       const [base, a] = edgeStyle(0), outline = (state.edges || wire) && !balls;
       const up = [false, false, false], f = [0, 0, 0];
       for (let t = 0; t < tris.length; t += 3) {
         const tr = triTube[t / 3];
-        if (!tr && !outline) continue;
+        if (tr < 0 || (!tr && !outline)) continue;
         f[0] = tris[t]; f[1] = tris[t + 1]; f[2] = tris[t + 2];
         for (let k = 0; k < 3; k++) up[k] = q[f[k] * 4 + 3] > s;
         if (up[0] === up[1] && up[1] === up[2]) continue;
@@ -1556,7 +1563,7 @@
   const tags = hash.split('.').filter(Boolean);
   for (const t of tags) {
     if (t === 'sliced') { state.mode = 'slice'; state.slice = 0.35; continue; }
-    const o = OBJECTS.find(o => o.key === t || o.key === 'poly:' + t || o.key === 'frac:' + t);
+    const o = OBJECTS.find(o => o.key === t || o.key === 'poly:' + t || o.key === 'frac:' + t || o.key === 'cath:' + t);
     if (o) state.key = o.key;
   }
   const startKey = state.key; state.key = 'poly:grand-600';

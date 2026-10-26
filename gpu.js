@@ -5,7 +5,7 @@
 // Nothing is meshed, so shapes can move every frame.
 (function (root) {
   const P = root.Polychora, O = root.Objects, CSG = root.CSG;
-  const T_CONVEX = 1, T_STAR = 2, T_FRAC = 3, T_TORUS = 4, T_HOPF = 5, T_MTN = 6, T_TREE = 7, T_BH = 8;
+  const T_CONVEX = 1, T_STAR = 2, T_FRAC = 3, T_TORUS = 4, T_HOPF = 5, T_MTN = 6, T_TREE = 7, T_BH = 8, T_PARTS = 9;
   const MAXS = 8, TEXW = 2048;
   const DEG = Math.PI / 180;
 
@@ -129,6 +129,8 @@
     }
     if (o.kind === 'mtn') return mountainData(prm);
     if (o.kind === 'tree') return treeData(prm);
+    // a cathedral: its tree of groups and convex parts (laid out in cathedrals.js); c1 is its length in texels
+    if (o.kind === 'cath') { const tx = O.cathedralTexels(o.id, prm); return { type: T_PARTS, texels: tx, c1: tx.length, c2: 0, prm: [0, 0, 0, 0] }; }
     if (o.kind === 'poly') return polytopeData(o.id);
     if (o.kind === 'frac') return fractalData(o.id, prm);
     if (o.kind === 'hopf') return hopfData(prm, time);
@@ -463,6 +465,21 @@
       i++;
     }
   }
+  // a union of convex parts in a tree of bounding balls: a group or part the ray's line misses is skipped whole
+  void partsIv(int k, vec4 Y0, vec4 Yd) {
+    int p = uOff[k], end = uOff[k] + uC1[k];
+    for (int guard = 0; guard < 100000; guard++) {
+      if (p >= end) break;
+      vec4 c = tex(p), m = tex(p + 1);
+      if (m.y < 0.0) { p += hitBall(c, m.x, Y0, Yd) ? 2 : int(m.z); continue; }
+      if (hitBall(c, m.x, Y0, Yd)) {
+        float lo = -1e9, hi = 1e9; int ilo = 0, ihi = 0; bool ok = true;
+        for (int q = 0; q < int(m.y); q++) { int ti = p + 4 + 2 * q; if (!clip(tex(ti), tex(ti + 1).x, Y0, Yd, ti, lo, hi, ilo, ihi)) { ok = false; break; } }
+        if (ok) addS(lo, hi, ivec2(k << 24 | ilo, 0), ivec2(k << 24 | ihi, 0));
+      }
+      p += int(m.z);
+    }
+  }
   vec3 terrainColor(int k, float y, float slope) {
     float sea = tex(uOff[k] + 1).x, snow = tex(uOff[k] + 1).y, top = uPrm[k].w;
     if (y <= sea + 2e-4) return vec3(0.17, 0.4, 0.66);
@@ -538,6 +555,22 @@
         nl = vec4(-g.x, 1.0, -g.y, -g.z);
         own = vec4(terrainColor(k, y.y, length(g)), 1.0);
       }
+    } else if (ty == ${T_PARTS}) {
+      nl = tex(idx);
+      int hd = idx + int(tex(idx + 1).y);
+      vec4 m = tex(hd + 1);
+      own = vec4(tex(hd + 2).rgb, 1.0);
+      if (m.w > 0.5) {
+        // a round part: shade it smooth, turning the facet's sideways normal to point straight out from the axis
+        vec4 ax = tex(hd + 3), rad = vec4(y.x - ax.x, 0.0, y.z - ax.z, y.w - ax.w), nh = vec4(nl.x, 0.0, nl.z, nl.w);
+        float lr = length(rad), lh = length(nh);
+        if (lr > 1e-6 && lh > 1e-6 && dot(rad, nh) > 0.8 * lr * lh) nl = rad / lr * lh + vec4(0.0, nl.y, 0.0, 0.0);
+      } else if (uEdges > 0.5) {
+        float best = -1e9;
+        for (int q = 0; q < int(m.y); q++) { int ti = hd + 4 + 2 * q; if (ti == idx) continue; best = max(best, dot(tex(ti), y) - tex(ti + 1).x); }
+        float px = (uOrtho > 0.5 ? uPx : uPx * t) * uScl[k];
+        edge = 1.0 - smoothstep(0.6, 1.6, -best / max(1e-6, px));
+      }
     } else {
       nl = tex(idx);
       // a polytope's cells carry their own (hue, lightness); other convex shapes leave them zero
@@ -581,6 +614,7 @@
       else if (ty == ${T_FRAC}) fracIv(k, Y0s[k], Yds[k]);
       else if (ty == ${T_MTN}) mtnIv(k, Y0s[k], Yds[k]);
       else if (ty == ${T_TREE}) treeIv(k, Y0s[k], Yds[k]);
+      else if (ty == ${T_PARTS}) partsIv(k, Y0s[k], Yds[k]);
       else tubeIv(k, Y0s[k], Yds[k]);
       combine(k == 0 ? 0 : uOp[k]);
     }
@@ -594,7 +628,7 @@
       vec3 rgb = c.rgb; float al;
       if (uMode < 0.5) { rgb = mix(rgb, uEdgeCol.rgb, edge * uEdgeCol.a); al = 1.0; }
       else if (uMode < 1.5) { rgb = mix(rgb, uEdgeCol.rgb, edge * uEdgeCol.a); al = uOpacity; }
-      else { rgb = uEdgeCol.rgb; al = max(edge * 0.9, uType[e.x >> 24] == ${T_CONVEX} ? 0.0 : 0.12); }
+      else { rgb = uEdgeCol.rgb; al = max(edge * 0.9, uType[e.x >> 24] == ${T_CONVEX} || uType[e.x >> 24] == ${T_PARTS} ? 0.0 : 0.12); }
       acc += (1.0 - accA) * al * rgb; accA += (1.0 - accA) * al;
       if (accA > 0.985) break;
     }
