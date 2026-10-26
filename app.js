@@ -98,6 +98,10 @@
     if (o.kind === 'cath') return [
       { id: 'detail', label: 'Detail', min: 1, max: 3, step: 1, def: 2, title: 'How round the domes, towers and columns are' },
       ...(O.CATHEDRALS[o.id].grounds ? [{ id: 'grounds', label: 'Grounds', type: 'check', def: true, title: 'The square, bell tower or baptistery around the church' }] : []),
+      { id: 'interior', label: 'Interior', type: 'check', def: false, title: 'Hollow: naves, aisles, arcades and domes to stand in (takes a few seconds to build)' },
+      { id: 'view', label: 'View from', type: 'select', options: [['', 'Outside'], ...O.CATHEDRALS[o.id].spots.map(n => [n, n])],
+        value: () => (inside && inside.shape === selShape().id ? inside.name : ''), act: v => (v ? standInside(v) : goOutside()), title: 'Stand inside, at eye height (builds the interior if it is off)' },
+      { id: 'help', type: 'help', show: () => !!inside, html: '<b>drag</b> look round · <b>↑ ↓ ← →</b> walk · <b>Q E</b> step through w<br><b>shift-drag</b> turn the building through w about you<br><b>S</b> projection: every layer across w at once (try Translucent)' },
     ];
     if (o.kind === 'tree') {
       const P0 = O.LSYS_PRESETS.tetra, edited = { custom: true };
@@ -183,6 +187,8 @@
       else r.innerHTML = `<label for="${id}">${d.label}</label><input type="range" id="${id}" min="${d.min}" max="${d.max}" step="${d.step}"><output></output>`;
       box.appendChild(r);
       const inp = r.querySelector('input,select,textarea');
+      // a control of the view rather than the shape: no rebuild
+      if (d.act) { inp.value = d.value(); inp.addEventListener('change', () => d.act(inp.value)); continue; }
       if (d.type === 'check') inp.checked = prm[d.id]; else inp.value = prm[d.id];
       const out = r.querySelector('output'); if (out) out.value = fmtVal(d, prm[d.id]);
       if (d.type === 'text' || d.type === 'textarea') {
@@ -309,7 +315,7 @@
     document.querySelector(`input[name=rend][value=${state.renderer}]`).checked = true;
     document.querySelector('input[name=mode][value=' + state.mode + ']').checked = true;
     const slice = state.mode === 'slice';
-    $('sliceSec').hidden = !slice; $('projSec').hidden = slice; $('ghostL').hidden = !slice;
+    $('sliceSec').hidden = !slice || !!inside; $('projSec').hidden = slice; $('ghostL').hidden = !slice;
     $('eyeRow').hidden = state.p4 !== 'persp'; $('stereoHint').hidden = state.p4 !== 'stereo';
     $('opRow').hidden = state.surf !== 'trans'; $('ballRow').hidden = state.surf !== 'balls'; $('edges').parentElement.hidden = state.surf === 'balls';
     $('legend').hidden = state.col !== 'depth';
@@ -364,6 +370,7 @@
   addEventListener('keydown', e => {
     const t = e.target;
     if (t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !['range', 'checkbox', 'radio'].includes(t.type))) return;
+    if (inside && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'q', 'Q', 'e', 'E'].includes(e.key)) { e.preventDefault(); held.add(e.key.toLowerCase()); return; }
     if (e.key === ' ') { e.preventDefault(); state.playing = !state.playing; syncUI(); }
     else if (e.key === '[') step(-1);
     else if (e.key === ']') step(1);
@@ -371,6 +378,8 @@
     else if (e.key === 'p' || e.key === 'P') snapshot();
     else if (e.key === 'r' || e.key === 'R') toggleRecording();
   });
+  addEventListener('keyup', e => held.delete(e.key.toLowerCase()));
+  addEventListener('blur', () => held.clear());
 
   // ---------- capture ----------
   // Files go through the viewer's downloads capability when framed on claude.ai, else a plain link download.
@@ -537,6 +546,42 @@
     rotWorld(M, 0, 3, 0.31); rotWorld(M, 1, 2, 0.23); rotWorld(M, 2, 3, 0.17); rotWorld(M, 0, 1, 0.11); return M;
   }
   let R = ident4(), T = [0, 0, 0, 0];
+  // ---------- standing inside a cathedral ----------
+  // The camera stands at the view's origin; P, the standing point in the scene's coordinates, is kept there by
+  // setting T = −R·P every frame, so every 4D turn turns the building about the viewer, and the slice w = 0
+  // always passes through them.
+  let inside = null;
+  function goInside(name) {
+    const sh = selShape(), info = lastInfos.find(f => f.shape === sh.id), sp = info && info.spots && info.spots.find(s => s.name === name);
+    if (!sp) { inside = { shape: sh.id, name, P: null }; return; } // placed once the build arrives
+    const pl = window.CSG.placement(sh.place), p = sp.p;
+    const P = [0, 1, 2, 3].map(r => pl.off[r] + pl.s * (pl.R[r * 4] * p[0] + pl.R[r * 4 + 1] * p[1] + pl.R[r * 4 + 2] * p[2] + pl.R[r * 4 + 3] * p[3]));
+    const was = inside;
+    inside = { shape: sh.id, name, P };
+    state.pitch = -(sp.pitch ?? 0.08); // the camera looks down at positive pitch
+    if (!was || !was.P) {
+      R = ident4(); state.yaw = Math.PI / 2; state.mode = 'slice'; state.p3 = 'persp';
+      state.sweep = false; state.slice = 0; state.ghost = false; state.spin = [0, 0, 0, 0, 0, 0.04];
+    }
+    buildParamUI(); syncUI();
+  }
+  // standing inside needs the interior: turn it on (a rebuild), and stand once the build with its spots arrives
+  function standInside(name) {
+    const sh = selShape(), prm = shapePrm(sh);
+    if (!prm.interior) { prm.interior = true; dirty = true; const cb = $('prm-interior'); if (cb) cb.checked = true; }
+    goInside(name);
+  }
+  function goOutside(rebuildUI = true) {
+    if (!inside) return;
+    inside = null; R = initialPose(); T = [0, 0, 0, 0]; state.pitch = 0.3; state.yaw = 0.5; state.dist = 3.4; state.spin = [0, 0.12, 0, 0, 0, 0.04];
+    if (rebuildUI) { buildParamUI(); syncUI(); }
+  }
+  // walking: a step in the view's frame (x, y, z, w), carried into the scene by Rᵀ
+  function walk(v) {
+    if (!inside || !inside.P) return;
+    for (let c = 0; c < 4; c++) inside.P[c] += R[c] * v[0] + R[4 + c] * v[1] + R[8 + c] * v[2] + R[12 + c] * v[3];
+  }
+  const held = new Set();
   // The pose is affine: q = R·x + T. Every rotation turns about the pivot (given in object coordinates),
   // so the pivot's world position R·c + T stays put and the rest of the object swings around it.
   const pivotWorld = () => { const c = state.pivot; return [0, 1, 2, 3].map(r => R[r * 4] * c[0] + R[r * 4 + 1] * c[1] + R[r * 4 + 2] * c[2] + R[r * 4 + 3] * c[3] + T[r]); };
@@ -569,6 +614,7 @@
   // ---------- object loading ----------
   let G = null, dirty = true, hopfTime = 0, lastInfo = '', lastInfos = [];
   function select(key) {
+    if (inside) goOutside(false);
     const was = objOf(selShape().key);
     state.key = key; selShape().key = key;
     const o = cur();
@@ -646,6 +692,7 @@
     }
     gaps.sort((x, y) => x - y); m.edgeLen = gaps.length ? gaps[gaps.length >> 1] : 0.3;
     G = m; lastInfos = r.infos; lastBuildMs = r.ms;
+    for (const f of r.infos) if (f.gpu) O.cathedralTexelsArrived(f.gpuKey, f.gpu);
     showInfo();
   }
   let lastBuildMs = 0;
@@ -852,7 +899,7 @@
   function matOrtho(h, asp, n, f) { return [1 / (h * asp), 0, 0, 0, 0, 1 / h, 0, 0, 0, 0, -2 / (f - n), 0, 0, 0, -(f + n) / (f - n), 1]; }
   function viewMat() {
     const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw), cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
-    const m = [cy, sp * sy, -cp * sy, 0, 0, cp, sp, 0, sy, -sp * cy, cp * cy, 0, 0, 0, -state.dist, 1];
+    const m = [cy, sp * sy, -cp * sy, 0, 0, cp, sp, 0, sy, -sp * cy, cp * cy, 0, 0, 0, inside && inside.P ? 0 : -state.dist, 1];
     camF[0] = m[2]; camF[1] = m[6]; camF[2] = m[10];
     return m;
   }
@@ -893,7 +940,7 @@
   const pvP = new Float64Array(9);
   function pivotMarker() {
     const c = state.pivot;
-    if (!state.marker || (!c[0] && !c[1] && !c[2] && !c[3])) return;
+    if (inside || !state.marker || (!c[0] && !c[1] && !c[2] && !c[3])) return;
     const pw = pivotWorld(), mode = state.mode === 'slice' ? 'ortho' : state.p4;
     if (!project(pw, 0, pvP, 0, mode, state.eye4)) return;
     const a = theme.accent, h = 0.07 * state.dist / 3.7;
@@ -1437,6 +1484,22 @@
       if (turned && mesh) dirty = true;
     }
     if (dirty && !inFlight) { dirty = false; rebuild(); }
+    if (inside) { const sh = scene.shapes.find(x => x.id === inside.shape); if (!sh || objOf(sh.key).kind !== 'cath' || !shapePrm(sh).interior) goOutside(); }
+    if (inside) {
+      if (!inside.P) { const sh = scene.shapes.find(x => x.id === inside.shape), info = lastInfos.find(f => f.shape === inside.shape); if (sh && info && info.spots) goInside(inside.name); }
+      if (inside && inside.P) {
+        const sp = 0.05 * dt, fx = Math.sin(state.yaw), fz = -Math.cos(state.yaw);
+        if (held.has('arrowup')) walk([fx * sp, 0, fz * sp, 0]);
+        if (held.has('arrowdown')) walk([-fx * sp, 0, -fz * sp, 0]);
+        if (held.has('arrowright')) walk([-fz * sp, 0, fx * sp, 0]);
+        if (held.has('arrowleft')) walk([fz * sp, 0, -fx * sp, 0]);
+        if (held.has('e')) walk([0, 0, 0, sp]);
+        if (held.has('q')) walk([0, 0, 0, -sp]);
+        const P = inside.P;
+        for (let r = 0; r < 4; r++) T[r] = -(R[r * 4] * P[0] + R[r * 4 + 1] * P[1] + R[r * 4 + 2] * P[2] + R[r * 4 + 3] * P[3]);
+        state.slice = 0;
+      }
+    }
     if (state.mode === 'slice') {
       // the slider reaches at least ±1 and always across the object
       const [lo, hi] = sweepRange(), sl = $('slice'), mn = (Math.floor(Math.min(-1, lo) * 100) / 100).toString(), mx = (Math.ceil(Math.max(1, hi) * 100) / 100).toString();
@@ -1448,7 +1511,9 @@
         sl.value = state.slice; $('sliceO').value = state.slice.toFixed(3);
       }
     }
-    if (state.mode === 'slice') $('wread').textContent = `w = ${state.slice >= 0 ? '+' : '−'}${Math.abs(state.slice).toFixed(3)}`;
+    // inside, the slice always passes through the viewer: show how far they have stepped through w instead
+    const wv = inside && inside.P ? inside.P[3] : state.slice;
+    if (state.mode === 'slice' || (inside && inside.P)) $('wread').textContent = `${inside && inside.P ? 'you at w' : 'w'} = ${wv >= 0 ? '+' : '−'}${Math.abs(wv).toFixed(3)}`;
 
     let dpr = Math.min(devicePixelRatio || 1, 2);
     const shooting = shotScale > 0;
@@ -1458,8 +1523,8 @@
     gl.viewport(0, 0, W, H);
     const c = theme.canvas; gl.clearColor(c[0], c[1], c[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-    const view = viewMat(), asp = W / Math.max(1, H), fov = 0.62;
-    const proj = state.p3 === 'persp' ? matPersp(fov, asp, 0.05, 80) : matOrtho(state.dist * Math.tan(fov / 2), asp, -40, 80);
+    const within = !!(inside && inside.P), view = viewMat(), asp = W / Math.max(1, H), fov = within ? 1.2 : 0.62;
+    const proj = within ? matPersp(fov, asp, 0.003, 6) : state.p3 === 'persp' ? matPersp(fov, asp, 0.05, 80) : matOrtho(state.dist * Math.tan(fov / 2), asp, -40, 80);
 
     nTri = 0; nLine = 0; nGhost = 0;
     let rayPx = 0;
@@ -1549,26 +1614,34 @@
     const p = pointers.get(e.pointerId); if (!p) return;
     const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
     if (pointers.size === 2) { const [a, b] = [...pointers.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); if (pinch0) state.dist = Math.max(1.2, Math.min(16, dist0 * pinch0 / d)); return; }
-    if (p.four || e.shiftKey) aboutPivot(() => { rotWorld(R, 0, 3, dx * 0.008); rotWorld(R, 1, 3, -dy * 0.008); });
+    if (inside && inside.P && (p.four || e.shiftKey)) { rotWorld(R, 0, 3, dx * 0.006); rotWorld(R, 2, 3, -dy * 0.006); }
+    else if (p.four || e.shiftKey) aboutPivot(() => { rotWorld(R, 0, 3, dx * 0.008); rotWorld(R, 1, 3, -dy * 0.008); });
     else { state.yaw += dx * 0.008; state.pitch = Math.max(-1.5, Math.min(1.5, state.pitch + dy * 0.008)); }
   });
   const up = e => { pointers.delete(e.pointerId); pinch0 = 0; };
   canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
-  canvas.addEventListener('wheel', e => { e.preventDefault(); state.dist = Math.max(1.2, Math.min(16, state.dist * Math.exp(e.deltaY * 0.0012))); }, { passive: false });
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    if (inside && inside.P) { const s = -e.deltaY * 0.00012; walk([Math.sin(state.yaw) * s, 0, -Math.cos(state.yaw) * s, 0]); return; }
+    state.dist = Math.max(1.2, Math.min(16, state.dist * Math.exp(e.deltaY * 0.0012)));
+  }, { passive: false });
 
-  // deep links: #clifford, #hopf, #sierpinski-5, #small-stellated … plus #sliced and #pivot=x,y,z,w
-  let hash = location.hash.slice(1);
+  // deep links: #clifford, #hopf, #sierpinski-5, #small-stellated … plus #sliced, #inside (a cathedral, from its
+  // first standing point) and #pivot=x,y,z,w
+  let hash = location.hash.slice(1), goInsideOnLoad = false;
   const pv = /pivot=([-+\d.e]+(?:,[-+\d.e]+){3})/.exec(hash);
   if (pv) { const c = pv[1].split(',').map(Number); if (c.every(isFinite)) state.pivot = c; hash = hash.replace(pv[0], ''); }
   const tags = hash.split('.').filter(Boolean);
   for (const t of tags) {
     if (t === 'sliced') { state.mode = 'slice'; state.slice = 0.35; continue; }
+    if (t === 'inside') { goInsideOnLoad = true; continue; }
     const o = OBJECTS.find(o => o.key === t || o.key === 'poly:' + t || o.key === 'frac:' + t || o.key === 'cath:' + t);
     if (o) state.key = o.key;
   }
   const startKey = state.key; state.key = 'poly:grand-600';
   R = initialPose();
   select(startKey);
+  if (goInsideOnLoad && cur().kind === 'cath') standInside(O.CATHEDRALS[cur().id].spots[0]);
   buildShapeList();
   requestAnimationFrame(frame);
 })();

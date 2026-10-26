@@ -130,7 +130,8 @@
     if (o.kind === 'mtn') return mountainData(prm);
     if (o.kind === 'tree') return treeData(prm);
     // a cathedral: its tree of groups and convex parts (laid out in cathedrals.js); c1 is its length in texels
-    if (o.kind === 'cath') { const tx = O.cathedralTexels(o.id, prm); return { type: T_PARTS, texels: tx, c1: tx.length, c2: 0, prm: [0, 0, 0, 0] }; }
+    // (built in the worker and sent with the mesh; until it arrives, nothing is drawn and pack asks again)
+    if (o.kind === 'cath') { const tx = O.cathedralTexelsFor(o.id, prm); return tx ? { type: T_PARTS, texels: tx, c1: tx.length, c2: 0, prm: [0, 0, 0, 0] } : { type: T_PARTS, texels: [], c1: 0, c2: 0, prm: [0, 0, 0, 0], pending: true }; }
     if (o.kind === 'poly') return polytopeData(o.id);
     if (o.kind === 'frac') return fractalData(o.id, prm);
     if (o.kind === 'hopf') return hopfData(prm, time);
@@ -562,12 +563,14 @@
       own = vec4(tex(hd + 2).rgb, 1.0);
       if (m.w > 0.5) {
         // a round part: shade it smooth, turning the facet's sideways normal to point straight out from the axis
+        // (or straight in, on the inside of a shell)
         vec4 ax = tex(hd + 3), rad = vec4(y.x - ax.x, 0.0, y.z - ax.z, y.w - ax.w), nh = vec4(nl.x, 0.0, nl.z, nl.w);
-        float lr = length(rad), lh = length(nh);
-        if (lr > 1e-6 && lh > 1e-6 && dot(rad, nh) > 0.8 * lr * lh) nl = rad / lr * lh + vec4(0.0, nl.y, 0.0, 0.0);
+        float lr = length(rad), lh = length(nh), cs = lr > 1e-6 && lh > 1e-6 ? dot(rad, nh) / (lr * lh) : 0.0;
+        if (abs(cs) > 0.8) nl = sign(cs) * rad / lr * lh + vec4(0.0, nl.y, 0.0, 0.0);
       } else if (uEdges > 0.5) {
         float best = -1e9;
-        for (int q = 0; q < int(m.y); q++) { int ti = hd + 4 + 2 * q; if (ti == idx) continue; best = max(best, dot(tex(ti), y) - tex(ti + 1).x); }
+        // seams between the pieces of a carved part are not edges
+        for (int q = 0; q < int(m.y); q++) { int ti = hd + 4 + 2 * q; vec4 hq = tex(ti + 1); if (ti == idx || hq.z > 0.5) continue; best = max(best, dot(tex(ti), y) - hq.x); }
         float px = (uOrtho > 0.5 ? uPx : uPx * t) * uScl[k];
         edge = 1.0 - smoothstep(0.6, 1.6, -best / max(1e-6, px));
       }
@@ -669,10 +672,10 @@
       const recs = descs.map(d => {
         const sig = JSON.stringify([d.key, d.prm, d.kind === 'hopf' && d.prm.flow ? time : 0]);
         let c = cache.get(d.id);
-        if (!c || c.sig !== sig) { c = { sig, data: shapeData({ kind: d.kind, id: d.oid }, d.prm, time) }; cache.set(d.id, c); }
+        if (!c || c.sig !== sig || c.data.pending) { c = { sig, data: shapeData({ kind: d.kind, id: d.oid }, d.prm, time) }; cache.set(d.id, c); }
         return c.data;
       });
-      const key = recs.map(r => r.texels.length + ':' + r.type).join('|') + '|' + descs.map(d => cache.get(d.id).sig).join('|');
+      const key = recs.map(r => r.texels.length + ':' + r.type + (r.pending ? 'p' : '')).join('|') + '|' + descs.map(d => cache.get(d.id).sig).join('|');
       if (key === packKey) return packed;
       let total = 0; const offs = recs.map(r => { const o = total; total += r.texels.length; return o; });
       const rows = Math.max(1, Math.ceil(total / TEXW)), arr = new Float32Array(TEXW * rows * 4);
