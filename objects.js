@@ -215,17 +215,23 @@
   }
   const kleinPoint = (C, v) => [C.c[0] + C.R * Math.cos(v) * C.e[0], C.c[1] + C.R * Math.cos(v) * C.e[1], C.R * Math.sin(v), C.c[3]];
 
-  function klein(prm) {
-    const M = new Mesh(), nv = prm.res, nu = 2 * prm.res, C = kleinCircles(prm.lift, nu), half = nv / 2, idx = [];
+  // the bottle's grid of triangles; going once round the loop reverses each circle: v → π − v. That gluing is the whole of the topology.
+  function kleinSheet(M, C, nv, colOf) {
+    const nu = C.length, half = nv / 2, idx = [];
     for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) idx.push(M.pt(kleinPoint(C[i], TAU * j / nv)));
-    // going once round the loop reverses each circle: v → π − v. That gluing is the whole of the topology.
     const at = (i, j) => (i % nu === 0 && i > 0 ? idx[(half - j + 2 * nv) % nv] : idx[i * nv + (j + nv) % nv]);
-    // the mirror z = 0 cuts the surface into two Möbius strips: hue runs round the loop, one strip light, one dark
     for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) {
-      const col = hsl((i + 0.5) / nu, 0.6, j < half ? 0.6 : 0.44);
+      const col = colOf(i, j);
       M.tri(at(i, j), at(i + 1, j), at(i + 1, j + 1), col);
       M.tri(at(i, j), at(i + 1, j + 1), at(i, j + 1), col);
     }
+    return at;
+  }
+
+  function klein(prm) {
+    const M = new Mesh(), nv = prm.res, nu = 2 * prm.res, C = kleinCircles(prm.lift, nu), half = nv / 2;
+    // the mirror z = 0 cuts the surface into two Möbius strips: hue runs round the loop, one strip light, one dark
+    const at = kleinSheet(M, C, nv, (i, j) => hsl((i + 0.5) / nu, 0.6, j < half ? 0.6 : 0.44));
     if (prm.grid > 0) {
       const su = Math.max(1, Math.round(nu / prm.grid));
       let sv = Math.max(1, Math.round(nv / prm.grid));
@@ -250,6 +256,48 @@
     return M.done({
       sliceTube: prm.tube, tubeR: prm.tube * 1.4,
       info: { name: 'Klein bottle', sub: `K² ⊂ E⁴, lift ${prm.lift.toFixed(2)}`, counts: [['grid', `${nu}×${nv}`], ['tris', M.tris.length / 3], ['tets', 0], ['curves', M.curves.length]], rows },
+    });
+  }
+
+  // ---------------- Klein 3-manifold ----------------
+  // The Klein bottle one dimension up: the same loop with each circle replaced by a round 2-sphere, in the 3-flat of
+  // z, w and e(u). Once round the loop e reverses, which reflects the sphere, so this is the closed, one-sided 3-manifold
+  // S² ×~ S¹ (the non-orientable S² bundle over the circle). Spinning the bottle in the zw plane about z = w = 0 sweeps
+  // out exactly this shape, so the slice w = 0 is the 3D bottle. Every closed 3-manifold embedded in E⁴ has an inside and
+  // an outside, so a one-sided one cannot be: here the neck meets the wall along a 2-sphere, and there is no way round
+  // that in four dimensions. Mesh: a sphere times each step of the loop, split into tetrahedra.
+  const KLEIN3_LAYERS = [0, 40, 72, 96];
+  function klein3(prm) {
+    const M = new Mesh(), L = KLEIN3_LAYERS[prm.detail], C = kleinCircles(0, L), { v: sph, f: tri } = icosphere(prm.detail);
+    const place = (C, n) => [C.c[0] + C.R * n[0] * C.e[0], C.c[1] + C.R * n[0] * C.e[1], C.R * n[1], C.R * n[2]];
+    const key = n => n.map(x => Math.round(x * 1e6) + 0).join();
+    const byPos = new Map(sph.map((n, i) => [key(n), i])), mirror = sph.map(n => byPos.get(key([-n[0], n[1], n[2]])));
+    const layer = C.map(c => sph.map(n => M.pt(place(c, n))));
+    layer.push(mirror.map(i => layer[0][i])); // the last layer is the first, reflected: the gluing
+    // the mirror w = 0 cuts it into two solid Klein bottles, light and dark; hue runs round the loop
+    const colOf = (k, a, b, c) => hsl((k + 0.5) / L, 0.6, sph[a][2] + sph[b][2] + sph[c][2] > 0 ? 0.6 : 0.44);
+    for (let k = 0; k < L; k++) for (const t of tri) {
+      const [p, q, u] = t.slice().sort((x, y) => x - y), A = layer[k], B = layer[k + 1], col = colOf(k, p, q, u);
+      M.tet(A[p], A[q], A[u], B[p], col); M.tet(A[q], A[u], B[p], B[q], col); M.tet(A[u], B[p], B[q], B[u], col);
+    }
+    // In projection, what shows is the bottle (w = 0) and a few of the spheres
+    if (prm.bottle) {
+      const nu = 96, nv = 48;
+      kleinSheet(M, kleinCircles(0, nu), nv, (i, j) => hsl((i + 0.5) / nu, 0.6, j < nv / 2 ? 0.6 : 0.44));
+    }
+    for (let s = 0; s < prm.spheres; s++) {
+      const k = Math.floor(L * (s + 0.5) / prm.spheres), col = hsl((k + 0.5) / L, 0.6, 0.5);
+      for (const [a, b, c] of tri) M.tri(layer[k][a], layer[k][b], layer[k][c], col);
+    }
+    const rows = [
+      ['Topology', 'S² ×~ S¹: closed, one-sided, three-dimensional; a loop of spheres, reflected once round'],
+      ['Self-crossing', 'the neck meets the wall along a 2-sphere. This cannot be undone in 4D: a closed 3-manifold embedded in E⁴ has an inside and an outside, and this has neither. It would need a fifth dimension'],
+      ['Slices', 'w = 0 is exactly the 3D Klein bottle. Moving off it, spheres too small to reach the slice drop out, so past the neck’s radius the loop breaks and the bottle opens into a plain sphere'],
+      ['Colour', 'light and dark are the two solid Klein bottles the mirror w = 0 cuts it into; their shared boundary is the bottle; hue runs round the loop'],
+      ['Spin tip', 'turning in ZW does nothing: the shape is round in that plane'],
+    ];
+    return M.done({
+      info: { name: 'Klein 3-manifold', sub: 'S² ×~ S¹ immersed in E⁴', counts: [['loop', L], ['tets', M.tets.length / 4], ['tris', M.tris.length / 3], ['verts', M.pts.length / 4]], rows },
     });
   }
 
@@ -1012,6 +1060,6 @@
     });
   }
 
-  root.Objects = { polytope, clifford, klein, kleinCircles, kleinPoint, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, spreadHopf, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS, blackHole, blackHoleShape, photon, kerrPhoton, chord, TUNES, melodyShape, melodyMesh, hull4, Mesh };
+  root.Objects = { polytope, clifford, klein, klein3, kleinCircles, kleinPoint, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, spreadHopf, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS, blackHole, blackHoleShape, photon, kerrPhoton, chord, TUNES, melodyShape, melodyMesh, hull4, Mesh };
   if (typeof module !== 'undefined') module.exports = root.Objects;
 })(typeof window !== 'undefined' ? window : globalThis);
