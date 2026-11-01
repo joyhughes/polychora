@@ -5,7 +5,8 @@
 // Nothing is meshed, so shapes can move every frame.
 (function (root) {
   const P = root.Polychora, O = root.Objects, CSG = root.CSG;
-  const T_CONVEX = 1, T_STAR = 2, T_FRAC = 3, T_TORUS = 4, T_HOPF = 5, T_MTN = 6, T_TREE = 7, T_BH = 8, T_PARTS = 9;
+  const T_CONVEX = 1, T_STAR = 2, T_FRAC = 3, T_TORUS = 4, T_HOPF = 5, T_MTN = 6, T_TREE = 7, T_BH = 8, T_PARTS = 9, T_KLEIN = 10;
+  const KLEIN_GPU = 64;
   const MAXS = 8, TEXW = 2048;
   const DEG = Math.PI / 180;
 
@@ -135,6 +136,12 @@
     if (o.kind === 'poly') return polytopeData(o.id);
     if (o.kind === 'frac') return fractalData(o.id, prm);
     if (o.kind === 'hopf') return hopfData(prm, time);
+    // Klein bottle: its loop of circles, two texels each (centre; direction in xy, radius); the circles lie in the plane of z and that direction
+    if (o.kind === 'klein') {
+      const tx = [];
+      for (const C of O.kleinCircles(prm.lift, KLEIN_GPU)) tx.push(C.c, [C.e[0], C.e[1], C.R, 0]);
+      return { type: T_KLEIN, texels: tx, c1: KLEIN_GPU, c2: 0, prm: [prm.tube, 0, 0, 0] };
+    }
     // Clifford torus: the points within the tube radius of the torus (or of the shell, if it is thick)
     return { type: T_TORUS, texels: [], c1: 0, c2: 0, prm: [prm.eta * DEG, prm.thick * DEG, prm.tube, 0] };
   }
@@ -341,7 +348,34 @@
     if (h1.y < 0.5) d = max(d, -w);
     return d;
   }
-  float tubeD(int k, vec4 y, out int fi) { fi = 0; return uType[k] == ${T_TORUS} ? torusD(k, y) : uType[k] == ${T_BH} ? bhD(k, y) : hopfD(k, y, fi); }
+  // Klein bottle: squared distance to one circle of its loop (the same for e and −e)
+  float kleinC(vec4 y, vec4 c, vec4 e) {
+    vec4 q = y - c; float a = dot(q.xy, e.xy), rho = length(vec2(a, q.z));
+    return dot(q, q) - rho * rho + (rho - e.z) * (rho - e.z);
+  }
+  // the circle at position s (−1 to 1) between stored circle b and its neighbour: going past the last circle meets
+  // the first one reversed, the half turn of the loop
+  float kleinAt(int k, vec4 y, int b, float s) {
+    int n = uC1[k], off = uOff[k], q = s < 0.0 ? (b == 0 ? n - 1 : b - 1) : (b == n - 1 ? 0 : b + 1);
+    vec4 c0 = tex(off + 2 * b), e0 = tex(off + 2 * b + 1), c1 = tex(off + 2 * q), e1 = tex(off + 2 * q + 1);
+    if ((q == 0 && b == n - 1) || (b == 0 && q == n - 1)) e1.xy = -e1.xy;
+    float f = abs(s);
+    return kleinC(y, mix(c0, c1, f), vec4(normalize(mix(e0.xy, e1.xy, f)), mix(e0.z, e1.z, f), 0.0));
+  }
+  // the nearest stored circle, then a search between its neighbours (fi: position round the loop, 1024 per circle, for the colour)
+  float kleinD(int k, vec4 y, out int fi) {
+    int n = uC1[k], off = uOff[k], b = 0; float best = 1e9;
+    for (int i = 0; i < n; i++) { float d = kleinC(y, tex(off + 2 * i), tex(off + 2 * i + 1)); if (d < best) { best = d; b = i; } }
+    float s = 0.0, h = 0.5;
+    for (int r = 0; r < 5; r++) {
+      float sa = max(-1.0, s - h), sc = min(1.0, s + h), a = kleinAt(k, y, b, sa), c = kleinAt(k, y, b, sc);
+      if (a < best && a <= c) { best = a; s = sa; } else if (c < best) { best = c; s = sc; }
+      h *= 0.5;
+    }
+    fi = int(mod(float(b) + s + float(n), float(n)) * 1024.0);
+    return sqrt(max(0.0, best)) - uPrm[k].x;
+  }
+  float tubeD(int k, vec4 y, out int fi) { fi = 0; return uType[k] == ${T_TORUS} ? torusD(k, y) : uType[k] == ${T_BH} ? bhD(k, y) : uType[k] == ${T_KLEIN} ? kleinD(k, y, fi) : hopfD(k, y, fi); }
   void tubeIv(int k, vec4 Y0, vec4 Yd) {
     // only inside the ball |y| <= 1.2 that holds the 3-sphere objects
     float A = dot(Yd, Yd), B = dot(Y0, Yd), C = dot(Y0, Y0) - 1.44, D = B * B - A * C;
@@ -512,11 +546,12 @@
     int k = e.x >> 24, idx = e.x & 0xFFFFFF, ty = uType[k];
     vec4 y = Y0s[k] + t * Yds[k], nl, own;
     edge = 0.0;
-    if (ty == ${T_TORUS} || ty == ${T_HOPF} || ty == ${T_BH}) {
+    if (ty == ${T_TORUS} || ty == ${T_HOPF} || ty == ${T_BH} || ty == ${T_KLEIN}) {
       int fi; float h = 1e-3;
       nl = vec4(tubeD(k, y + vec4(h, 0, 0, 0), fi) - tubeD(k, y - vec4(h, 0, 0, 0), fi), tubeD(k, y + vec4(0, h, 0, 0), fi) - tubeD(k, y - vec4(0, h, 0, 0), fi),
                 tubeD(k, y + vec4(0, 0, h, 0), fi) - tubeD(k, y - vec4(0, 0, h, 0), fi), tubeD(k, y + vec4(0, 0, 0, h), fi) - tubeD(k, y - vec4(0, 0, 0, h), fi));
       if (ty == ${T_HOPF}) { tubeD(k, y, fi); own = vec4(hopfColor(tex(uOff[k] + 2 * fi)), 1.0); }
+      else if (ty == ${T_KLEIN}) { tubeD(k, y, fi); own = vec4(hsl(float(fi) / (1024.0 * float(uC1[k])), 0.6, y.z > 0.0 ? 0.6 : 0.44), 1.0); }
       else if (ty == ${T_BH}) {
         // the lapse √(ΣΔ/A), as in the mesh, and violet inside the ergosphere
         vec4 h = tex(uOff[k]); float a = h.y, M = h.z, r = max(bhR(k, y.xyz), h.x), c = clamp(y.y / r, -1.0, 1.0);

@@ -169,6 +169,90 @@
     });
   }
 
+  // ---------------- Klein bottle ----------------
+  // The classic bottle (Robert Israel's parametrisation, with its cross-sections made round) is a loop of circles,
+  // u ∈ [0, π): centre c(u) in the xy plane, radius R(u), each circle in the plane of z and a direction e(u) in xy.
+  //   c = (4 cs(1 − 3c⁴ + 2c⁶), 4s²), R = (2/15)(3 + 5cs), e ∝ (c, s³(1 − 16c⁴)/2), with c = cos u, s = sin u
+  // c and R have period π but e comes back reversed: that half turn is what makes the surface one-sided. In 3D the
+  // neck has to pass through the wall (u ≈ 0.81π meets u ≈ 0.15π). No closed surface in S³ or E³ can avoid this, but
+  // in E⁴ it can: w = −L sin 2u moves the neck and the wall to opposite sides of w = 0, and the surface is embedded.
+  const KLEIN_TURN = 0.6, KLEIN_N = 2048, KLEIN_SCALE = 0.42, KLEIN_GAP = Math.sin(2 * 0.155 * Math.PI) - Math.sin(2 * 0.815 * Math.PI);
+  function kleinRaw(u) {
+    const c = Math.cos(u), s = Math.sin(u), ex = c, ey = 0.5 * s ** 3 * (1 - 16 * c ** 4), l = Math.hypot(ex, ey);
+    return { x: 4 * c * s * (1 - 3 * c ** 4 + 2 * c ** 6) - 0.29, y: 4 * s * s - 2.21, R: 2 / 15 * (3 + 5 * c * s), ex: ex / l, ey: ey / l };
+  }
+  // u at even steps along the loop, so the circles are spaced to suit the surface
+  let kleinLen = null;
+  function kleinU(t) {
+    if (!kleinLen) {
+      kleinLen = new Float64Array(KLEIN_N + 1);
+      // the steps follow the two edges of the profile in the plane z = 0, and close up where those edges turn tightly (at the rim)
+      const edge = (k, sg) => [k.x + sg * k.R * k.ex, k.y + sg * k.R * k.ey];
+      let a = kleinRaw(0), ang = [null, null];
+      for (let i = 1; i <= KLEIN_N; i++) {
+        const b = kleinRaw(Math.PI * i / KLEIN_N);
+        let step = 0;
+        [1, -1].forEach((sg, q) => {
+          const p = edge(a, sg), r = edge(b, sg), th = Math.atan2(r[1] - p[1], r[0] - p[0]), dt = ang[q] === null ? 0 : Math.abs(Math.atan2(Math.sin(th - ang[q]), Math.cos(th - ang[q])));
+          ang[q] = th; step += Math.hypot(r[0] - p[0], r[1] - p[1]) + KLEIN_TURN * dt;
+        });
+        kleinLen[i] = kleinLen[i - 1] + step; a = b;
+      }
+    }
+    const L = t * kleinLen[KLEIN_N];
+    let lo = 0, hi = KLEIN_N;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (kleinLen[m] <= L) lo = m; else hi = m; }
+    return Math.PI * (lo + (L - kleinLen[lo]) / Math.max(1e-12, kleinLen[hi] - kleinLen[lo])) / KLEIN_N;
+  }
+  // n evenly spaced circles round the loop, in 4D: { c: [x, y, 0, w], e: [ex, ey], R }
+  function kleinCircles(lift, n) {
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const u = kleinU(i / n), k = kleinRaw(u), S = KLEIN_SCALE;
+      out.push({ c: [S * k.x, S * k.y, 0, -lift * Math.sin(2 * u)], e: [k.ex, k.ey], R: S * k.R });
+    }
+    return out;
+  }
+  const kleinPoint = (C, v) => [C.c[0] + C.R * Math.cos(v) * C.e[0], C.c[1] + C.R * Math.cos(v) * C.e[1], C.R * Math.sin(v), C.c[3]];
+
+  function klein(prm) {
+    const M = new Mesh(), nv = prm.res, nu = 2 * prm.res, C = kleinCircles(prm.lift, nu), half = nv / 2, idx = [];
+    for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) idx.push(M.pt(kleinPoint(C[i], TAU * j / nv)));
+    // going once round the loop reverses each circle: v → π − v. That gluing is the whole of the topology.
+    const at = (i, j) => (i % nu === 0 && i > 0 ? idx[(half - j + 2 * nv) % nv] : idx[i * nv + (j + nv) % nv]);
+    // the mirror z = 0 cuts the surface into two Möbius strips: hue runs round the loop, one strip light, one dark
+    for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) {
+      const col = hsl((i + 0.5) / nu, 0.6, j < half ? 0.6 : 0.44);
+      M.tri(at(i, j), at(i + 1, j), at(i + 1, j + 1), col);
+      M.tri(at(i, j), at(i + 1, j + 1), at(i, j + 1), col);
+    }
+    if (prm.grid > 0) {
+      const su = Math.max(1, Math.round(nu / prm.grid));
+      let sv = Math.max(1, Math.round(nv / prm.grid));
+      while (half % sv) sv--; // lines of constant v must meet their mirror images across the gluing
+      for (let i = 0; i < nu; i += su) for (let j = 0; j < nv; j++) M.edge(at(i, j), at(i, j + 1));
+      for (let j = 0; j < nv; j += sv) for (let i = 0; i < nu; i++) M.edge(at(i, j), at(i + 1, j));
+    }
+    // the curve the two strips share: it goes round the loop twice before it closes
+    if (prm.seam) {
+      const pts = [];
+      for (let i = 0; i < 2 * nu; i++) pts.push(kleinPoint(C[i % nu], i < nu ? 0 : Math.PI));
+      M.curve(pts, true, [0.96, 0.78, 0.32], 0.7);
+    }
+    const gap = prm.lift * KLEIN_GAP;
+    const rows = [
+      ['Topology', 'closed and one-sided: no inside or outside; Euler characteristic 0'],
+      ['Embedding', gap > 1e-6 ? `no self-intersection: where the neck crosses the wall in x, y, z they stand ${gap.toFixed(3)} apart in w` : 'lift is 0, so this is the 3D bottle: the neck passes through the wall in a closed curve'],
+      ['In S³', 'it could not lie in a 3-sphere: only flat 4D has room for it'],
+      ['Colour', 'light and dark are the two Möbius strips the mirror z = 0 cuts it into; hue runs round the loop'],
+    ];
+    if (prm.seam) rows.push(['Gold curve', 'the edge the two Möbius strips share, once round each, so it closes only after two laps']);
+    return M.done({
+      sliceTube: prm.tube, tubeR: prm.tube * 1.4,
+      info: { name: 'Klein bottle', sub: `K² ⊂ E⁴, lift ${prm.lift.toFixed(2)}`, counts: [['grid', `${nu}×${nv}`], ['tris', M.tris.length / 3], ['tets', 0], ['curves', M.curves.length]], rows },
+    });
+  }
+
   // ---------------- Hopf fibration ----------------
   // Fibre over the point of S² with polar angle th, azimuth ph:
   //   (cos(th/2) e^{i(t+ph)}, sin(th/2) e^{it}),  t ∈ [0, 2π)
@@ -928,6 +1012,6 @@
     });
   }
 
-  root.Objects = { polytope, clifford, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, spreadHopf, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS, blackHole, blackHoleShape, photon, kerrPhoton, chord, TUNES, melodyShape, melodyMesh, hull4, Mesh };
+  root.Objects = { polytope, clifford, klein, kleinCircles, kleinPoint, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, spreadHopf, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS, blackHole, blackHoleShape, photon, kerrPhoton, chord, TUNES, melodyShape, melodyMesh, hull4, Mesh };
   if (typeof module !== 'undefined') module.exports = root.Objects;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -9,6 +9,7 @@
   const OBJECTS = [];
   for (const s of P.CATALOG) OBJECTS.push({ key: 'poly:' + s.id, label: `${s.name}  ${s.sym}`, group: s.kind === 'convex' ? 'Convex regular polychora' : s.kind === 'star' ? 'Schläfli–Hess star polychora' : 'Other polytopes', kind: 'poly', id: s.id });
   OBJECTS.push({ key: 'clifford', label: 'Clifford torus', group: 'Surfaces & fibrations in S³', kind: 'clifford', s3: true });
+  OBJECTS.push({ key: 'klein', label: 'Klein bottle', group: 'Surfaces in flat 4D', kind: 'klein' });
   OBJECTS.push({ key: 'melody', label: 'Melody as a 4D shape', group: '4D music', kind: 'melody' });
   OBJECTS.push({ key: 'blackhole', label: 'Black hole (curved 3D space)', group: 'Curved space', kind: 'bh' });
   OBJECTS.push({ key: 'hopf', label: 'Hopf fibration', group: 'Surfaces & fibrations in S³', kind: 'hopf', s3: true });
@@ -30,6 +31,13 @@
       { id: 'p', label: 'Knot p', min: -7, max: 7, step: 1, def: 3, show: p => p.knot },
       { id: 'q', label: 'Knot q', min: -7, max: 7, step: 1, def: 2, show: p => p.knot },
       { id: 'tube', label: 'Tube radius', min: 0.005, max: 0.08, step: 0.001, def: 0.022, fmt: 3 },
+    ];
+    if (o.kind === 'klein') return [
+      { id: 'lift', label: 'Lift into w', min: 0, max: 0.5, step: 0.01, def: 0.3, fmt: 2, title: 'How far the surface moves through w as it goes round. At 0 it is the 3D bottle, with the neck passing through the wall; above 0 the two miss each other' },
+      { id: 'res', label: 'Resolution', min: 16, max: 128, step: 8, def: 64 },
+      { id: 'grid', label: 'Grid lines', min: 0, max: 32, step: 1, def: 12 },
+      { id: 'seam', label: 'Möbius edge', type: 'check', def: true, title: 'The curve shared by the two Möbius strips that make up the bottle' },
+      { id: 'tube', label: 'Tube radius', min: 0.005, max: 0.08, step: 0.001, def: 0.018, fmt: 3 },
     ];
     if (o.kind === 'hopf') return [
       { id: 'pattern', label: 'Base points', type: 'select', options: [['rings', 'Latitude rings'], ['sphere', 'Spread over S²'], ['circle', 'One great circle']], def: 'rings' },
@@ -540,7 +548,7 @@
   function initialPose() {
     const M = ident4();
     if (cur().s3) { rotWorld(M, 1, 2, 0.5); return M; } // keep the torus axes readable in stereographic view
-    if (cur().kind === 'mtn' || cur().kind === 'tree' || cur().kind === 'cath') { rotWorld(M, 0, 2, 0.5); return M; }
+    if (cur().kind === 'mtn' || cur().kind === 'tree' || cur().kind === 'cath' || cur().kind === 'klein') { rotWorld(M, 0, 2, 0.5); return M; }
     // the black hole's depth w points up the screen, and slices go across y, so y = 0 is the textbook funnel
     if (cur().kind === 'bh') { rotWorld(M, 1, 3, -Math.PI / 2); rotWorld(M, 0, 2, 0.4); return M; } // up stays up, and slices start straight across w
     rotWorld(M, 0, 3, 0.31); rotWorld(M, 1, 2, 0.23); rotWorld(M, 2, 3, 0.17); rotWorld(M, 0, 1, 0.11); return M;
@@ -629,10 +637,11 @@
       // the mountain keeps its own colours and keeps y up: it turns about the vertical and through w
       // a slice of the tree only meets the branches that cross it, so it opens in projection to show the whole tree
       if (o.kind === 'bh') { state.col = 'flat'; state.spin = [0, 0.12, 0, 0, 0, 0]; state.dist = 3.6; state.pitch = 0.45; }
+      else if (o.kind === 'klein') { state.col = 'flat'; state.surf = 'trans'; state.mode = state.renderer === 'gpu' ? state.mode : 'proj'; state.spin = [0, 0.1, 0, 0.12, 0, 0]; state.dist = 3.7; state.pitch = 0.2; }
       else if (o.kind === 'tree') { state.col = 'flat'; if (state.renderer !== 'gpu') state.mode = 'proj'; state.spin = [0, 0.15, 0, 0, 0, 0]; state.dist = 3.9; state.pitch = 0.25; }
       else if (o.kind === 'cath') { state.col = 'flat'; state.mode = 'slice'; state.slice = 0; state.sweep = false; state.spin = [0, 0.12, 0, 0, 0, 0.04]; state.dist = 3.4; state.pitch = 0.3; }
       else if (o.kind === 'mtn') { state.col = 'flat'; state.mode = 'slice'; state.spin = [0, 0.15, 0, 0, 0, 0]; state.dist = 4.3; state.pitch = 0.5; }
-      else if (was && (was.kind === 'mtn' || was.kind === 'tree' || was.kind === 'bh' || was.kind === 'cath')) { state.col = 'depth'; state.spin = [0, 0, 0.12, 0.3, 0, 0.18]; state.pitch = -0.35; }
+      else if (was && (was.kind === 'mtn' || was.kind === 'tree' || was.kind === 'bh' || was.kind === 'cath' || was.kind === 'klein')) { if (was.kind === 'klein') state.surf = 'solid'; state.col = 'depth'; state.spin = [0, 0, 0.12, 0.3, 0, 0.18]; state.pitch = -0.35; }
       R = initialPose(); T = [0, 0, 0, 0];
     }
     buildParamUI(); buildShapeList(); showInfo(); dirty = true; syncUI();
