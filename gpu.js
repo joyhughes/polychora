@@ -5,7 +5,7 @@
 // Nothing is meshed, so shapes can move every frame.
 (function (root) {
   const P = root.Polychora, O = root.Objects, CSG = root.CSG;
-  const T_CONVEX = 1, T_STAR = 2, T_FRAC = 3, T_TORUS = 4, T_HOPF = 5, T_MTN = 6, T_TREE = 7, T_BH = 8, T_PARTS = 9, T_KLEIN = 10;
+  const T_CONVEX = 1, T_STAR = 2, T_FRAC = 3, T_TORUS = 4, T_HOPF = 5, T_MTN = 6, T_TREE = 7, T_BH = 8, T_PARTS = 9, T_KLEIN = 10, T_BALLS = 11;
   const KLEIN_GPU = 64;
   const MAXS = 8, TEXW = 2048;
   const DEG = Math.PI / 180;
@@ -138,6 +138,12 @@
     if (o.kind === 'hopf') return hopfData(prm, time);
     // Klein bottle: its loop of circles, two texels each (centre; direction in xy, radius); the circles lie in the plane of z and that direction
     // (the Klein 3-manifold is the same with spheres, which also spread into w: the 1 in the second texel; drawn as a thin shell)
+    // sphere packing: per ball its centre and [radius, colour]; prm.x bounds the whole cluster
+    if (o.kind === 'pack') {
+      const S = O.packing(prm), tx = [];
+      for (const b of S.balls) tx.push(b.c, [b.r, ...b.col]);
+      return { type: T_BALLS, texels: tx, c1: S.balls.length, c2: 0, prm: [S.bound, 0, 0, 0] };
+    }
     if (o.kind === 'klein' || o.kind === 'klein3') {
       const tx = [], three = o.kind === 'klein3' ? 1 : 0;
       for (const C of O.kleinCircles(three ? 0 : prm.lift, KLEIN_GPU)) tx.push(C.c, [C.e[0], C.e[1], C.R, three]);
@@ -501,6 +507,16 @@
       i++;
     }
   }
+  // balls: each one the ray's line passes through gives an interval, solved exactly
+  void ballsIv(int k, vec4 Y0, vec4 Yd) {
+    if (!hitBall(vec4(0), uPrm[k].x, Y0, Yd)) return;
+    float A = dot(Yd, Yd);
+    for (int i = 0; i < uC1[k]; i++) {
+      vec4 c = tex(uOff[k] + 2 * i), d = Y0 - c; float r = tex(uOff[k] + 2 * i + 1).x, B = dot(d, Yd), D = B * B - A * (dot(d, d) - r * r);
+      if (D <= 0.0) continue;
+      float sq = sqrt(D); addS((-B - sq) / A, (-B + sq) / A, ivec2(k << 24 | i, 0), ivec2(k << 24 | i, 0));
+    }
+  }
   // a union of convex parts in a tree of bounding balls: a group or part the ray's line misses is skipped whole
   void partsIv(int k, vec4 Y0, vec4 Yd) {
     int p = uOff[k], end = uOff[k] + uC1[k];
@@ -567,6 +583,9 @@
         float th = atan(y.y, y.x), ph = atan(y.w, y.z);
         own = vec4(hsl(fract(th / 6.2831853 + 1.0), 0.6, mod(floor(fract(ph / 6.2831853 + 1.0) * 8.0), 2.0) > 0.5 ? 0.6 : 0.44), 1.0);
       }
+    } else if (ty == ${T_BALLS}) {
+      nl = y - tex(uOff[k] + 2 * idx);
+      own = vec4(tex(uOff[k] + 2 * idx + 1).yzw, 1.0);
     } else if (ty == ${T_TREE}) {
       int i = idx / 40, f = idx - 40 * i, b = uOff[k] + 8 * i;
       vec4 a = tex(b + 1), P = tex(b + 5);
@@ -654,6 +673,7 @@
       else if (ty == ${T_MTN}) mtnIv(k, Y0s[k], Yds[k]);
       else if (ty == ${T_TREE}) treeIv(k, Y0s[k], Yds[k]);
       else if (ty == ${T_PARTS}) partsIv(k, Y0s[k], Yds[k]);
+      else if (ty == ${T_BALLS}) ballsIv(k, Y0s[k], Yds[k]);
       else tubeIv(k, Y0s[k], Yds[k]);
       combine(k == 0 ? 0 : uOp[k]);
     }

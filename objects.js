@@ -4,6 +4,7 @@
 //   tets   — solid tetrahedra (the 3D boundary of a 4D solid), sliced into triangles
 //   edges  — line segments
 //   curves — closed or open polylines (drawn as tubes; sliced into points)
+//   balls  — solid 4D balls { p: centre point, r, col } (drawn as spheres; a slice cuts one into a sphere)
 (function (root) {
   const Poly = root.Polychora || require('./geometry.js');
   const TAU = 2 * Math.PI, DEG = Math.PI / 180;
@@ -34,7 +35,7 @@
   const gcd = (a, b) => (b ? gcd(b, a % b) : Math.abs(a));
 
   class Mesh {
-    constructor() { this.pts = []; this.tris = []; this.triCol = []; this.tets = []; this.tetCol = []; this.tetCtr = []; this.edges = []; this.curves = []; }
+    constructor() { this.pts = []; this.tris = []; this.triCol = []; this.tets = []; this.tetCol = []; this.tetCtr = []; this.edges = []; this.curves = []; this.balls = []; }
     pt(p) { this.pts.push(p[0], p[1], p[2], p[3]); return this.pts.length / 4 - 1; }
     tri(a, b, c, col) { this.tris.push(a, b, c); this.triCol.push(col[0], col[1], col[2]); }
     tet(a, b, c, d, col, ctr = -1) { this.tets.push(a, b, c, d); this.tetCol.push(col[0], col[1], col[2]); this.tetCtr.push(ctr); }
@@ -50,7 +51,7 @@
         pts: Float64Array.from(this.pts), npts: this.pts.length / 4,
         tris: Int32Array.from(this.tris), triCol: Float32Array.from(this.triCol),
         tets: Int32Array.from(this.tets), tetCol: Float32Array.from(this.tetCol), tetCtr: Int32Array.from(this.tetCtr),
-        edges: Int32Array.from(this.edges), curves: this.curves, sliceTube: 0, tubeR: 0.03, ...extra,
+        edges: Int32Array.from(this.edges), curves: this.curves, balls: this.balls, sliceTube: 0, tubeR: 0.03, ...extra,
       };
     }
   }
@@ -298,6 +299,77 @@
     ];
     return M.done({
       info: { name: 'Klein 3-manifold', sub: 'S² ×~ S¹ immersed in E⁴', counts: [['loop', L], ['tets', M.tets.length / 4], ['tris', M.tris.length / 3], ['verts', M.pts.length / 4]], rows },
+    });
+  }
+
+  // ---------------- sphere packing ----------------
+  // Equal 4D balls centred on the points of a lattice, kept to the shells nearest the centre. Lattice units: D₄ is the
+  // integer points with an even coordinate sum (nearest neighbours √2 apart, at the 24-cell's vertices); A₄ is the
+  // integer points of R⁵ with coordinate sum 0, written in an orthonormal basis of that hyperplane; Z⁴ is all integer points.
+  // density = (volume of one ball) / (volume per lattice point), with a ball of radius r having volume π²r⁴/2.
+  const PACKINGS = {
+    d4: { name: 'D₄ lattice packing', sym: 'the 24-cell lattice', dmin: Math.SQRT2, covol: 2, kiss: 24 },
+    a4: { name: 'A₄ lattice packing', sym: 'the root lattice A₄', dmin: Math.SQRT2, covol: Math.sqrt(5), kiss: 20 },
+    z4: { name: 'Cubic packing', sym: 'the integer lattice Z⁴', dmin: 1, covol: 1, kiss: 8 },
+  };
+  const packDensity = L => Math.PI ** 2 / 2 * (L.dmin / 2) ** 4 / L.covol;
+  function latticePoints(id) {
+    const P = [], R = 4;
+    if (id === 'a4') {
+      const H = [1, 2, 3, 4].map(k => [...Array(5)].map((_, i) => (i < k ? 1 : i === k ? -k : 0) / Math.sqrt(k * (k + 1))));
+      for (let a = -R; a <= R; a++) for (let b = -R; b <= R; b++) for (let c = -R; c <= R; c++) for (let d = -R; d <= R; d++) {
+        const e = -(a + b + c + d); if (Math.abs(e) > R) continue;
+        const v = [a, b, c, d, e]; P.push(H.map(h => h.reduce((s, x, i) => s + x * v[i], 0)));
+      }
+      return P;
+    }
+    for (let a = -R; a <= R; a++) for (let b = -R; b <= R; b++) for (let c = -R; c <= R; c++) for (let d = -R; d <= R; d++)
+      if (id === 'z4' || (a + b + c + d) % 2 === 0) P.push([a, b, c, d]);
+    return P;
+  }
+  const SHELL_COL = [[0.96, 0.78, 0.32], [0.25, 0.74, 0.72], [0.93, 0.45, 0.42], [0.55, 0.62, 0.98], [0.62, 0.86, 0.36], [0.9, 0.5, 0.86]];
+  let packKey = '', packVal = null;
+  // the balls of a packing: shell 0 is the centre, shell 1 its touching neighbours (the kissing configuration), …
+  function packing(prm) {
+    const key = [prm.lattice, prm.shells, prm.size].join();
+    if (key === packKey) return packVal;
+    const L = PACKINGS[prm.lattice], pts = latticePoints(prm.lattice).map(c => ({ c, n: Math.hypot(...c) }));
+    const norms = [];
+    for (const { n } of pts.slice().sort((a, b) => a.n - b.n)) if (!norms.length || n - norms[norms.length - 1] > 1e-6) norms.push(n);
+    const reach = norms[Math.min(prm.shells, norms.length - 1)], kept = pts.filter(p => p.n <= reach + 1e-6);
+    const scale = 0.95 / (reach + L.dmin / 2), r = prm.size * L.dmin / 2 * scale;
+    const balls = kept.map(p => {
+      const shell = norms.findIndex(n => Math.abs(n - p.n) < 1e-6);
+      return { c: p.c.map(x => x * scale), r, shell, col: SHELL_COL[shell % SHELL_COL.length] };
+    });
+    const shellCounts = norms.slice(0, prm.shells + 1).map(n => kept.filter(p => Math.abs(p.n - n) < 1e-6).length);
+    packKey = key;
+    packVal = { L, balls, r, scale, dmin: L.dmin * scale, bound: reach * scale + r, shellCounts };
+    return packVal;
+  }
+  function packingMesh(prm) {
+    const S = packing(prm), M = new Mesh(), idx = S.balls.map(b => M.pt(b.c));
+    S.balls.forEach((b, i) => M.balls.push({ p: idx[i], r: b.r, col: b.col }));
+    let contacts = 0;
+    for (let i = 0; i < S.balls.length; i++) for (let j = i + 1; j < S.balls.length; j++) {
+      const a = S.balls[i].c, b = S.balls[j].c;
+      if (Math.abs(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3]) - S.dmin) < 1e-6) { contacts++; if (prm.contacts) M.edge(idx[i], idx[j]); }
+    }
+    const L = S.L, dens = id => packDensity(PACKINGS[id]).toFixed(4), half = (0.5 * S.scale).toFixed(3);
+    const rows = [
+      ['Density', `${packDensity(L).toFixed(4)} of space filled (π²/${prm.lattice === 'd4' ? '16' : prm.lattice === 'z4' ? '32' : '(8√5)'})`],
+      ['Kissing', `each ball touches ${L.kiss}${prm.lattice === 'd4' ? ', at the vertices of a 24-cell: the most possible in 4D (Musin, 2003)' : ''}`],
+      ['Compare', `D₄ ${dens('d4')} · A₄ ${dens('a4')} · Z⁴ ${dens('z4')}; in 3D the best is 0.7405 (FCC)`],
+    ];
+    if (prm.lattice === 'd4') {
+      rows.push(['Record', 'the densest lattice packing in 4D (Korkine and Zolotarev, 1877); no denser packing of any kind is known']);
+      rows.push(['Slices', `at w = 0 the balls form the face-centred cubic packing, the densest in 3D. At w = ±${half}, halfway to the next layer, the balls of both layers are cut to the same size and touch in a simple cubic grid`]);
+    } else if (prm.lattice === 'z4') rows.push(['Slices', `at w = 0, a simple cubic packing; at w = ±${half} every ball is cut to a point`]);
+    rows.push(['Shells', S.shellCounts.map((c, i) => i ? `${c}` : '1').join(' + ') + ` = ${S.balls.length} balls; shell 1 is the kissing configuration`]);
+    rows.push(['Combining', 'the ray tracer cuts the balls exactly and lets the packing carve other shapes. The mesh view keeps or drops each ball whole, by its centre, and there the packing cuts nothing']);
+    if (prm.size < 1) rows.push(['Size', `balls at ${Math.round(prm.size * 100)}% of touching size`]);
+    return M.done({
+      info: { name: L.name, sub: L.sym, counts: [['balls', S.balls.length], ['kissing', L.kiss], ['contacts', contacts], ['density', packDensity(L).toFixed(3)]], rows },
     });
   }
 
@@ -1060,6 +1132,6 @@
     });
   }
 
-  root.Objects = { polytope, clifford, klein, klein3, kleinCircles, kleinPoint, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, spreadHopf, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS, blackHole, blackHoleShape, photon, kerrPhoton, chord, TUNES, melodyShape, melodyMesh, hull4, Mesh };
+  root.Objects = { polytope, clifford, klein, klein3, packing, packingMesh, PACKINGS, kleinCircles, kleinPoint, hopf, hopfBase, fibrePoint, fractal, FRACTALS, hopfColor, spreadHopf, hsl, mountain, mountainHeights, KUHN, tree, treeData, ICOSA, LSYS_PRESETS, blackHole, blackHoleShape, photon, kerrPhoton, chord, TUNES, melodyShape, melodyMesh, hull4, Mesh };
   if (typeof module !== 'undefined') module.exports = root.Objects;
 })(typeof window !== 'undefined' ? window : globalThis);

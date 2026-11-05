@@ -9,6 +9,7 @@
     if (d.kind === 'clifford') return O.clifford(d.prm);
     if (d.kind === 'klein') return O.klein(d.prm);
     if (d.kind === 'klein3') return O.klein3(d.prm);
+    if (d.kind === 'pack') return O.packingMesh(d.prm);
     if (d.kind === 'hopf') return O.hopf(d.prm, hopfTime);
     if (d.kind === 'mtn') return O.mountain(d.prm);
     if (d.kind === 'tree') return O.tree(d.prm);

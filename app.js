@@ -11,6 +11,7 @@
   OBJECTS.push({ key: 'clifford', label: 'Clifford torus', group: 'Surfaces & fibrations in S³', kind: 'clifford', s3: true });
   OBJECTS.push({ key: 'klein', label: 'Klein bottle', group: 'Surfaces in flat 4D', kind: 'klein' });
   OBJECTS.push({ key: 'klein3', label: 'Klein 3-manifold', group: 'Surfaces in flat 4D', kind: 'klein3' });
+  OBJECTS.push({ key: 'packing', label: 'Sphere packing', group: 'Sphere packing', kind: 'pack' });
   OBJECTS.push({ key: 'melody', label: 'Melody as a 4D shape', group: '4D music', kind: 'melody' });
   OBJECTS.push({ key: 'blackhole', label: 'Black hole (curved 3D space)', group: 'Curved space', kind: 'bh' });
   OBJECTS.push({ key: 'hopf', label: 'Hopf fibration', group: 'Surfaces & fibrations in S³', kind: 'hopf', s3: true });
@@ -39,6 +40,12 @@
       { id: 'grid', label: 'Grid lines', min: 0, max: 32, step: 1, def: 12 },
       { id: 'seam', label: 'Möbius edge', type: 'check', def: true, title: 'The curve shared by the two Möbius strips that make up the bottle' },
       { id: 'tube', label: 'Tube radius', min: 0.005, max: 0.08, step: 0.001, def: 0.018, fmt: 3 },
+    ];
+    if (o.kind === 'pack') return [
+      { id: 'lattice', label: 'Lattice', type: 'select', options: [['d4', 'D₄ (the 24-cell lattice)'], ['a4', 'A₄'], ['z4', 'Z⁴ (cubic)']], def: 'd4', title: 'D₄ is the densest known packing in 4D' },
+      { id: 'shells', label: 'Shells', min: 1, max: 4, step: 1, def: 2, title: 'Shells of balls round the centre ball; 1 shows just the balls touching it (the kissing configuration)' },
+      { id: 'size', label: 'Ball size', min: 0.3, max: 1, step: 0.01, def: 1, fmt: 2, title: '1: balls just touch; smaller opens gaps to see into the packing' },
+      { id: 'contacts', label: 'Contacts', type: 'check', def: false, title: 'An edge between every two balls that touch' },
     ];
     if (o.kind === 'klein3') return [
       { id: 'detail', label: 'Detail', min: 1, max: 3, step: 1, def: 2, title: 'How finely each sphere and the loop are divided' },
@@ -554,7 +561,7 @@
   function initialPose() {
     const M = ident4();
     if (cur().s3) { rotWorld(M, 1, 2, 0.5); return M; } // keep the torus axes readable in stereographic view
-    if (cur().kind === 'mtn' || cur().kind === 'tree' || cur().kind === 'cath' || cur().kind === 'klein' || cur().kind === 'klein3') { rotWorld(M, 0, 2, 0.5); return M; }
+    if (cur().kind === 'mtn' || cur().kind === 'tree' || cur().kind === 'cath' || cur().kind === 'klein' || cur().kind === 'klein3' || cur().kind === 'pack') { rotWorld(M, 0, 2, 0.5); return M; }
     // the black hole's depth w points up the screen, and slices go across y, so y = 0 is the textbook funnel
     if (cur().kind === 'bh') { rotWorld(M, 1, 3, -Math.PI / 2); rotWorld(M, 0, 2, 0.4); return M; } // up stays up, and slices start straight across w
     rotWorld(M, 0, 3, 0.31); rotWorld(M, 1, 2, 0.23); rotWorld(M, 2, 3, 0.17); rotWorld(M, 0, 1, 0.11); return M;
@@ -644,11 +651,12 @@
       // a slice of the tree only meets the branches that cross it, so it opens in projection to show the whole tree
       if (o.kind === 'bh') { state.col = 'flat'; state.spin = [0, 0.12, 0, 0, 0, 0]; state.dist = 3.6; state.pitch = 0.45; }
       else if (o.kind === 'klein') { state.col = 'flat'; state.surf = 'trans'; state.mode = state.renderer === 'gpu' ? state.mode : 'proj'; state.spin = [0, 0.1, 0, 0.12, 0, 0]; state.dist = 3.7; state.pitch = 0.2; }
+      else if (o.kind === 'pack') { state.col = 'flat'; state.surf = 'solid'; state.mode = 'slice'; state.slice = 0; state.sweep = true; state.spin = [0, 0.1, 0, 0, 0, 0]; state.dist = 3.7; state.pitch = 0.3; }
       else if (o.kind === 'klein3') { state.col = 'flat'; state.surf = 'trans'; state.mode = 'slice'; state.slice = 0; state.sweep = false; state.spin = [0, 0.1, 0, 0, 0, 0]; state.dist = 3.7; state.pitch = 0.2; }
       else if (o.kind === 'tree') { state.col = 'flat'; if (state.renderer !== 'gpu') state.mode = 'proj'; state.spin = [0, 0.15, 0, 0, 0, 0]; state.dist = 3.9; state.pitch = 0.25; }
       else if (o.kind === 'cath') { state.col = 'flat'; state.mode = 'slice'; state.slice = 0; state.sweep = false; state.spin = [0, 0.12, 0, 0, 0, 0.04]; state.dist = 3.4; state.pitch = 0.3; }
       else if (o.kind === 'mtn') { state.col = 'flat'; state.mode = 'slice'; state.spin = [0, 0.15, 0, 0, 0, 0]; state.dist = 4.3; state.pitch = 0.5; }
-      else if (was && (was.kind === 'mtn' || was.kind === 'tree' || was.kind === 'bh' || was.kind === 'cath' || was.kind === 'klein' || was.kind === 'klein3')) { if (was.kind === 'klein' || was.kind === 'klein3') state.surf = 'solid'; state.col = 'depth'; state.spin = [0, 0, 0.12, 0.3, 0, 0.18]; state.pitch = -0.35; }
+      else if (was && (was.kind === 'mtn' || was.kind === 'tree' || was.kind === 'bh' || was.kind === 'cath' || was.kind === 'klein' || was.kind === 'klein3' || was.kind === 'pack')) { if (was.kind === 'klein' || was.kind === 'klein3') state.surf = 'solid'; state.col = 'depth'; state.spin = [0, 0, 0.12, 0.3, 0, 0.18]; state.pitch = -0.35; }
       R = initialPose(); T = [0, 0, 0, 0];
     }
     buildParamUI(); buildShapeList(); showInfo(); dirty = true; syncUI();
@@ -694,6 +702,7 @@
     m.bc = [0, 0, 0, 0]; m.br = 0;
     for (let i = 0; i < m.npts * 4; i++) m.bc[i & 3] += m.pts[i] / m.npts;
     for (let i = 0; i < m.npts; i++) m.br = Math.max(m.br, Math.hypot(m.pts[i * 4] - m.bc[0], m.pts[i * 4 + 1] - m.bc[1], m.pts[i * 4 + 2] - m.bc[2], m.pts[i * 4 + 3] - m.bc[3]));
+    for (const b of m.balls || []) { const o = b.p * 4; m.br = Math.max(m.br, Math.hypot(m.pts[o] - m.bc[0], m.pts[o + 1] - m.bc[1], m.pts[o + 2] - m.bc[2], m.pts[o + 3] - m.bc[3]) + b.r); }
     if (!(m.br > 0)) m.br = 1;
     // balls view: the edges' end points, their flat colours, and the typical gap between neighbouring vertices,
     // which sizes the balls (not the edge length: a star polytope's edges are long chords)
@@ -1017,6 +1026,7 @@
     }
     if (balls) ballsProjection(depth);
     else if (state.edges || state.surf === 'wire') edgeLines(0, depth);
+    if (state.surf !== 'wire') packBalls(false, depth, alpha);
     if (!curves.length) return;
     if (state.surf === 'wire') { curveLines(0, depth); return; }
     const ta = trans ? Math.min(1, 0.35 + state.opacity * 2) : 1;
@@ -1053,7 +1063,8 @@
     depthColor(s, sliceCol, 0);
     const v = [0, 0, 0, 0], above = [false, false, false, false], A = [0, 0], B = [0, 0];
     if (balls) ballsSlice(depth);
-    else if (!wire) {
+    if (!wire) packBalls(true, depth, alpha);
+    if (!balls && !wire) {
       for (let t = 0; t < tets.length / 4; t++) {
         let na = 0;
         for (let k = 0; k < 4; k++) { v[k] = tets[t * 4 + k]; above[k] = q[v[k] * 4 + 3] > s; if (above[k]) na++; }
@@ -1161,6 +1172,21 @@
       if (depth) depthColor((wi + wj) / 2, vcol, 0);
       else { ballCol(i, false, vcol, 0); ballCol(j, false, vcol, 3); for (let c = 0; c < 3; c++) vcol[c] += (vcol[c + 3] - vcol[c]) * t; }
       sphere(ix[0], ix[1], ix[2], re * 1.6, vcol[0], vcol[1], vcol[2], 1, coarse);
+    }
+  }
+
+  // ---------- solid 4D balls (sphere packing) ----------
+  // In projection a ball shows as a sphere sized by the projection at its centre; a slice cuts it into a sphere of
+  // radius √(r² − d²), d being its centre's distance from the slice
+  function packBalls(slice, depth, alpha) {
+    const { balls, q, p3, ok } = G;
+    if (!balls || !balls.length) return;
+    const coarse = balls.length > 600;
+    for (const b of balls) {
+      const i = b.p, w = q[i * 4 + 3];
+      if (depth) depthColor(slice ? state.slice : w, vcol, 0); else { vcol[0] = b.col[0]; vcol[1] = b.col[1]; vcol[2] = b.col[2]; }
+      if (slice) { const d = w - state.slice; if (Math.abs(d) < b.r) sphere(q[i * 4], q[i * 4 + 1], q[i * 4 + 2], Math.sqrt(b.r * b.r - d * d), vcol[0], vcol[1], vcol[2], alpha, coarse); }
+      else if (ok[i]) sphere(p3[i * 3], p3[i * 3 + 1], p3[i * 3 + 2], b.r * projScale(w), vcol[0], vcol[1], vcol[2], alpha, coarse);
     }
   }
 

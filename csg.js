@@ -284,13 +284,13 @@
   }
 
   class Out {
-    constructor() { this.pts = []; this.tris = []; this.triCol = []; this.triTube = []; this.tets = []; this.tetCol = []; this.tetCtr = []; this.edges = []; this.curves = []; }
+    constructor() { this.pts = []; this.tris = []; this.triCol = []; this.triTube = []; this.tets = []; this.tetCol = []; this.tetCtr = []; this.edges = []; this.curves = []; this.balls = []; }
     get npts() { return this.pts.length / 4; }
     pt(a, b, c, d) { this.pts.push(a, b, c, d); return this.pts.length / 4 - 1; }
     done(info) {
       return {
         pts: Float64Array.from(this.pts), npts: this.npts, tris: Int32Array.from(this.tris), triCol: Float32Array.from(this.triCol), triTube: Float32Array.from(this.triTube),
-        tets: Int32Array.from(this.tets), tetCol: Float32Array.from(this.tetCol), tetCtr: Int32Array.from(this.tetCtr), edges: Int32Array.from(this.edges), curves: this.curves,
+        tets: Int32Array.from(this.tets), tetCol: Float32Array.from(this.tetCol), tetCtr: Int32Array.from(this.tetCtr), edges: Int32Array.from(this.edges), curves: this.curves, balls: this.balls,
         hasTube: this.triTube.some(v => v > 0), info,
       };
     }
@@ -448,6 +448,7 @@
       for (let t = 0; t < M.tets.length / 4; t++) { o.tets.push(M.tets[t * 4], M.tets[t * 4 + 1], M.tets[t * 4 + 2], M.tets[t * 4 + 3]); o.tetCol.push(...colour(M.tetCol, t * 3)); o.tetCtr.push(M.tetCtr[t]); }
       for (let e = 0; e < M.edges.length; e++) o.edges.push(M.edges[e]);
       for (const c of M.curves) o.curves.push({ start: c.start, n: c.n, closed: c.closed, col: tint ? colour(c.col, 0) : c.col, r: tubeR * (c.w || 1) });
+      for (const b of M.balls || []) o.balls.push({ p: b.p, r: b.r * s, col: tint ? colour(b.col, 0) : b.col });
       return o;
     }
     function copyInto(src, out) {
@@ -459,6 +460,7 @@
       for (const x of src.tetCtr) out.tetCtr.push(x >= 0 ? base + x : -1);
       out.triCol.push(...src.triCol); out.triTube.push(...src.triTube); out.tetCol.push(...src.tetCol);
       for (const c of src.curves) out.curves.push({ ...c, start: base + c.start });
+      for (const b of src.balls) out.balls.push({ ...b, p: base + b.p });
     }
 
     // Append the parts of src where keep(p) < 0 to out. featSrc: the mesh whose edges, faces and cells
@@ -753,6 +755,9 @@
       for (let t = 0; t < M.tets.length / 4; t++) { const c = M.tetCtr[t]; clipTet(base + M.tets[t * 4], base + M.tets[t * 4 + 1], base + M.tets[t * 4 + 2], base + M.tets[t * 4 + 3], M.tetCol.slice(t * 3, t * 3 + 3), c >= 0 ? base + c : -1, 0); }
       for (let t = 0; t < M.tris.length / 3; t++) { sliceR = M.triTube[t]; clipTri(base + M.tris[t * 3], base + M.tris[t * 3 + 1], base + M.tris[t * 3 + 2], M.triCol.slice(t * 3, t * 3 + 3), 0); }
       for (let e = 0; e < M.edges.length; e += 2) clipEdge(base + M.edges[e], base + M.edges[e + 1], 0);
+      // ---- balls: kept or dropped whole (the GPU ray tracer cuts them exactly). ballRule: 'all' in a union, 'none' for a
+      // subtracted packing (it has no field, so it cuts nothing here), otherwise by whether the centre is kept ----
+      for (const b of M.balls) if (M.ballRule === 'all' || (M.ballRule !== 'none' && val(base + b.p) < 0)) out.balls.push({ ...b, p: base + b.p });
       // ---- curves: split into the runs that survive ----
       for (const c of M.curves) {
         const col = c.col, tubeR = c.r, idx = k => base + c.start + k;
@@ -789,6 +794,7 @@
     let cur = worldMesh(0);
     for (let k = 1; k < n; k++) {
       const Sk = worldMesh(k), next = new Out(), op = ops[k], dk = wf[k];
+      cur.ballRule = op === 'add' ? 'all' : 'keep'; Sk.ballRule = op === 'add' ? 'all' : op === 'subtract' ? 'none' : 'keep';
       // the result so far: outside shape k (add, subtract) or inside it (intersect)
       const F = prefix(k), Fk = prefix(k + 1);
       if (!dk) { if (op !== 'intersect') copyInto(cur, next); }
@@ -823,11 +829,13 @@
     const use = j => { if (j >= 0) map[j] = 1; };
     m.tris.forEach(use); m.tets.forEach(use); m.edges.forEach(use); m.tetCtr.forEach(use);
     for (const c of m.curves) for (let k = 0; k < c.n; k++) map[c.start + k] = 1;
+    for (const b of m.balls) map[b.p] = 1;
     const o = new Out();
     for (let j = 0; j < np; j++) if (map[j] > 0) { map[j] = o.npts; o.pts.push(m.pts[j * 4], m.pts[j * 4 + 1], m.pts[j * 4 + 2], m.pts[j * 4 + 3]); }
     o.tris = m.tris.map(j => map[j]); o.tets = m.tets.map(j => map[j]); o.edges = m.edges.map(j => map[j]); o.tetCtr = m.tetCtr.map(j => (j >= 0 ? map[j] : -1));
     o.triCol = m.triCol; o.triTube = m.triTube; o.tetCol = m.tetCol;
     o.curves = m.curves.map(c => ({ ...c, start: map[c.start] }));
+    o.balls = m.balls.map(b => ({ ...b, p: map[b.p] }));
     return o;
   }
 
